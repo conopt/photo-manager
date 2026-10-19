@@ -55,6 +55,9 @@ dependencies = [
     "river>=0.21,<0.24",
     "scikit-learn",
     "simple-aesthetics-predictor",
+    # openai-clip (pulled in by pyiqa) imports pkg_resources, which
+    # setuptools removed in 82.0.
+    "setuptools<82",
 ]
 
 [project.optional-dependencies]
