@@ -169,3 +169,61 @@ def test_fetch_url_file_verifies_hash(tmp_path: Path, monkeypatch) -> None:
     )
     with pytest.raises(ConfigError):
         fetch_url_file(bad_entry, cache)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint-configured setup and the duplicate detector's torchvision weights
+# ---------------------------------------------------------------------------
+
+
+def _forbid_local_vlm(monkeypatch) -> None:
+    """Fail on any local VLM registry scan."""
+    def forbidden(*args, **kwargs):
+        raise AssertionError("local VLM registry scanned")
+
+    monkeypatch.setattr("cull.vlm_registry.discover_vlms", forbidden)
+
+
+def test_run_setup_with_endpoint_skips_local_vlm_check(tmp_path: Path, monkeypatch) -> None:
+    """With an endpoint configured, setup fetches local weights and writes the marker without a local VLM."""
+    monkeypatch.setenv("PHOTO_MANAGER_VLM_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("PHOTO_MANAGER_VLM_MODEL", "example-vision-model")
+    _forbid_local_vlm(monkeypatch)
+    cache = _build_cache(tmp_path)
+    recorder = _FetcherRecorder()
+    _install_noop_fetchers(monkeypatch, recorder)
+    _stub_two_phase_preflight(monkeypatch, tmp_path)
+    markers: list[ModelCacheConfig] = []
+    monkeypatch.setattr(setup_command, "write_bootstrap_marker", markers.append)
+    result = run_setup(SetupRequest(cache=cache, allow_network=True))
+    assert result.status.state == "ok"
+    assert markers == [cache]
+    assert len(recorder.calls) == len(MODEL_MANIFEST) + 1
+
+
+def test_run_setup_with_invalid_endpoint_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    """Invalid endpoint settings fail setup instead of silently passing."""
+    monkeypatch.setenv("PHOTO_MANAGER_VLM_BASE_URL", "file:///tmp/server")
+    _forbid_local_vlm(monkeypatch)
+    _install_noop_fetchers(monkeypatch, _FetcherRecorder())
+    _stub_two_phase_preflight(monkeypatch, tmp_path)
+    monkeypatch.setattr(setup_command, "write_bootstrap_marker", lambda c: pytest.fail("marker written"))
+    with pytest.raises(ConfigError, match="Invalid remote VLM"):
+        run_setup(SetupRequest(cache=_build_cache(tmp_path), allow_network=True))
+
+
+def test_duplicate_detector_weights_are_in_the_manifest(tmp_path: Path) -> None:
+    """The MobileNetV3 checkpoint imagededup loads is fetched to where torch.hub reads it."""
+    from torchvision.models import MobileNet_V3_Small_Weights  # noqa: PLC0415
+
+    from cull.model_cache import _manifest_file_path  # noqa: PLC0415
+    from cull.setup_command import _resolve_url_file_dest  # noqa: PLC0415
+
+    entry = MODEL_MANIFEST["imagededup_mobilenet"]
+    weights_url = MobileNet_V3_Small_Weights.IMAGENET1K_V1.url
+    assert entry.url == weights_url
+    assert entry.filename == weights_url.rsplit("/", 1)[-1]
+    cache = _build_cache(tmp_path)
+    expected = cache.torch_home / "hub" / "checkpoints" / entry.filename
+    assert _manifest_file_path(entry, cache) == expected
+    assert _resolve_url_file_dest(entry, cache) == expected

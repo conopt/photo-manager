@@ -19,7 +19,7 @@ from cull.models import Stage1Result, Stage3Result
 from cull.stage3.event_scoring import rate_photo
 from cull.stage3.prompt import PromptContext
 from cull.stage3.vlm_scoring import VlmRequest, VlmScoreCallInput, score_photo
-from cull.vlm_registry import resolve_alias
+from cull.vlm_registry import vlm_display_name
 
 if TYPE_CHECKING:
     from cull.pipeline import _Stage1Output, _Stage2Output, _StageRunCtx
@@ -207,9 +207,8 @@ def _run_s3_if_configured(run_in: _S3MaybeRunInput) -> dict[str, Stage3Result]:
     """Run Stage 3 VLM if configured; return empty dict otherwise."""
     if STAGE_VLM not in run_in.ctx.config.stages:
         return {}
-    entry = resolve_alias(run_in.ctx.config.model)
     s3_in = _S3RunInput(
         s2_out=run_in.s2_out, s1_out=run_in.s1_out,
-        ctx=run_in.ctx, model_name=entry.display_name,
+        ctx=run_in.ctx, model_name=vlm_display_name(run_in.ctx.config.model),
     )
     return _run_s3(s3_in)

@@ -162,7 +162,7 @@ def _patch_pipeline_stages(
         "cull._pipeline.stage3_runner._run_s3", lambda _r: (call_log.append("s3") or {})
     )
     monkeypatch.setattr(
-        "cull._pipeline.stage3_runner.resolve_alias", lambda _alias: fake_entry
+        "cull._pipeline.stage3_runner.vlm_display_name", lambda _alias: fake_entry.display_name
     )
     monkeypatch.setattr("cull._pipeline.orchestrator._unload_stage2_models", lambda: None)
     return s1_stub, s2_stub

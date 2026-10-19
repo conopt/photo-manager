@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import urllib.request
@@ -13,6 +14,8 @@ from pydantic import BaseModel
 from cull import vlm_registry
 from cull.config import (
     MODEL_MANIFEST,
+    SUBDIR_TORCH_HUB,
+    TORCH_HUB_CHECKPOINTS_SUBPATH,
     VLM_DEFAULT_ALIAS,
     VLM_MODELS_ROOT,
     ModelCacheConfig,
@@ -39,6 +42,8 @@ _HF_IGNORE_PATTERNS: list[str] = ["*.bin", "*.msgpack", "*.h5", "flax_*"]
 _PARTIAL_SUFFIX: str = ".part"
 _HF_BLOBS_SUBDIR: str = "blobs"
 _INCOMPLETE_SUFFIX: str = ".incomplete"
+VLM_BASE_URL_ENV: str = "PHOTO_MANAGER_VLM_BASE_URL"
+VLM_MODEL_ENV: str = "PHOTO_MANAGER_VLM_MODEL"
 
 
 class SetupRequest(BaseModel):
@@ -93,6 +98,8 @@ def _resolve_url_file_dest(
         return cache.mediapipe_dir / entry.filename
     if entry.subdir == _SUBDIR_EMOTIEFF:
         return cache.emotieff_dir / entry.filename
+    if entry.subdir == SUBDIR_TORCH_HUB:
+        return cache.torch_home.joinpath(*TORCH_HUB_CHECKPOINTS_SUBPATH, entry.filename)
     raise ConfigError(f"unknown manifest subdir: {entry.subdir}")
 
 
@@ -141,13 +148,29 @@ class _SkipContext(BaseModel):
 
 
 def _check_vlm_preflight() -> None:
-    """Validate the default VLM alias resolves on disk; raise ConfigError on failure."""
+    """Validate the VLM backend; raise ConfigError on failure.
+
+    With an endpoint configured, only its settings are validated: no local
+    model is needed. Otherwise the default alias must resolve on disk.
+    """
+    if os.environ.get(VLM_BASE_URL_ENV, "").strip():
+        _check_endpoint_settings()
+        return
     try:
         vlm_registry.run_vlm_preflight(VLM_DEFAULT_ALIAS)
     except VLMResolutionError as exc:
         raise ConfigError(
             f"VLM alias '{VLM_DEFAULT_ALIAS}' not found under {VLM_MODELS_ROOT}: {exc}"
         ) from exc
+
+
+def _check_endpoint_settings() -> None:
+    """Validate the configured endpoint settings without any network access."""
+    model = os.environ.get(VLM_MODEL_ENV, "").strip() or VLM_DEFAULT_ALIAS
+    try:
+        vlm_registry.run_vlm_preflight(model)
+    except VLMResolutionError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def run_setup(request: SetupRequest) -> SetupResult:

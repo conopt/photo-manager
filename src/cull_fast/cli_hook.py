@@ -31,7 +31,7 @@ from cull.pipeline import (
     SessionResult,
 )
 from cull._pipeline.stack_resolution import resolve_moment_stacks
-from cull.vlm_registry import resolve_alias
+from cull.vlm_registry import vlm_display_name
 from cull_fast.pipeline_fast import _run_s2_fast, _unload_stage2_models_fast
 
 __all__ = ["run_fast_pipeline"]
@@ -105,8 +105,7 @@ def _execute_stages_inline_fast(ctx: _StageRunCtx) -> _StagesResult:
 
 def _build_fast_s3_input(build_in: _FastS3BuildInput) -> _S3RunInput:
     """Build the _S3RunInput bundle for fast-mode Stage 3 dispatch."""
-    entry = resolve_alias(build_in.ctx.config.model)
     return _S3RunInput(
         s2_out=build_in.s2_out, s1_out=build_in.s1_out,
-        ctx=build_in.ctx, model_name=entry.display_name,
+        ctx=build_in.ctx, model_name=vlm_display_name(build_in.ctx.config.model),
     )

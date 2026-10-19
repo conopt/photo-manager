@@ -15,6 +15,8 @@ from cull.config import (
     ModelManifestEntry,
     SUBDIR_EMOTIEFF,
     SUBDIR_MEDIAPIPE,
+    SUBDIR_TORCH_HUB,
+    TORCH_HUB_CHECKPOINTS_SUBPATH,
 )
 
 BOOTSTRAP_MARKER_FILENAME: str = ".bootstrap-complete"
@@ -79,6 +81,8 @@ def _manifest_file_path(
         return cache.mediapipe_dir / entry.filename
     if entry.subdir == SUBDIR_EMOTIEFF:
         return cache.emotieff_dir / entry.filename
+    if entry.subdir == SUBDIR_TORCH_HUB:
+        return cache.torch_home.joinpath(*TORCH_HUB_CHECKPOINTS_SUBPATH, entry.filename)
     raise ConfigError(f"unknown manifest subdir: {entry.subdir}")
 
 

@@ -490,6 +490,14 @@ EMOTIEFF_ONNX_URL: str = (
     "models/affectnet_emotions/onnx/enet_b0_8_va_mtl.onnx?raw=true"
 )
 
+# imagededup's CNN duplicate detector builds torchvision's MobileNetV3-Small
+# with MobileNet_V3_Small_Weights.IMAGENET1K_V1, which torch.hub loads from
+# $TORCH_HOME/hub/checkpoints/<filename> and downloads there when missing.
+IMAGEDEDUP_MOBILENET_FILENAME: str = "mobilenet_v3_small-047dcff4.pth"
+IMAGEDEDUP_MOBILENET_URL: str = (
+    "https://download.pytorch.org/models/" + IMAGEDEDUP_MOBILENET_FILENAME
+)
+
 # SHA-256 pinning is deferred to v2 (see comments in cull.model_cache).
 # Until pinned, file-existence is the only integrity check on cached assets.
 # To pin a hash, replace the empty string with the 64-char hex digest from
@@ -500,12 +508,15 @@ AESTHETIC_HEAD_SHA256: str = ""
 FACE_LANDMARKER_SHA256: str = ""
 EMOTIEFF_ONNX_SHA256: str = ""
 DINOV2_MODEL_SHA256: str = ""
+IMAGEDEDUP_MOBILENET_SHA256: str = ""
 
 # Cache subdir tokens — kept here so config.py can build MODEL_MANIFEST
 # without importing from cull.model_cache (which would create a cycle).
 SUBDIR_HF: str = "hf"
 SUBDIR_MEDIAPIPE: str = "mediapipe"
 SUBDIR_EMOTIEFF: str = "emotieff"
+SUBDIR_TORCH_HUB: str = "torch_hub"
+TORCH_HUB_CHECKPOINTS_SUBPATH: tuple[str, ...] = ("hub", "checkpoints")
 
 # ---------------------------------------------------------------------------
 # Rejection explanations
@@ -704,6 +715,14 @@ MODEL_MANIFEST: dict[str, ModelManifestEntry] = {
         repo_id=DINOV2_REPO_ID,
         sha256=DINOV2_MODEL_SHA256 or None,
         subdir=SUBDIR_HF,
+    ),
+    "imagededup_mobilenet": ModelManifestEntry(
+        name="imagededup_mobilenet",
+        kind="url_file",
+        url=IMAGEDEDUP_MOBILENET_URL,
+        filename=IMAGEDEDUP_MOBILENET_FILENAME,
+        sha256=IMAGEDEDUP_MOBILENET_SHA256 or None,
+        subdir=SUBDIR_TORCH_HUB,
     ),
 }
 

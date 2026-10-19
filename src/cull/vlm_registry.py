@@ -65,6 +65,21 @@ def resolve_alias(alias: str, registry: VLMRegistry | None = None) -> VLMEntry:
     return entry
 
 
+def vlm_display_name(alias: str) -> str:
+    """Return the endpoint model ID when an endpoint is configured, else the local display name.
+
+    An endpoint run never consults the local model registry.
+    """
+    from cull.remote_vlm import remote_config
+
+    try:
+        if remote_config(alias) is not None:
+            return alias
+    except ValueError as exc:
+        raise VLMResolutionError(str(exc)) from None
+    return resolve_alias(alias).display_name
+
+
 def run_vlm_preflight(alias: str = VLM_DEFAULT_ALIAS) -> None:
     """Validate endpoint settings, or resolve a structurally valid local model.
 

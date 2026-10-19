@@ -446,7 +446,10 @@ def _persist_search_cache(source_path: Path, cache: _SearchCache) -> None:
 def _maybe_write_search_cache(
     batch_ctx: _BatchCtx, output: _Stage2Output
 ) -> None:
-    """Build + persist the search cache if none exists and we have embedding rows."""
+    """Build + persist the search cache if none exists and we have embedding rows.
+
+    A dry run keeps the cache in memory only: it writes nothing into the source.
+    """
     if output.search_cache is not None:
         return
     source_path = batch_ctx.loop_in.source_path
@@ -454,6 +457,8 @@ def _maybe_write_search_cache(
         return
     cache = _build_search_cache_from_rows(batch_ctx.embedding_rows)
     output.search_cache = cache
+    if batch_ctx.loop_in.config.is_dry_run:
+        return
     try:
         _persist_search_cache(source_path, cache)
     except OSError as exc:

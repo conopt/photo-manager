@@ -86,6 +86,13 @@ def _seed_emotieff(cache: ModelCacheConfig) -> None:
     (cache.emotieff_dir / cull_config.EMOTIEFF_ONNX_FILENAME).write_bytes(SAMPLE_BYTES)
 
 
+def _seed_torch_hub_checkpoint(cache: ModelCacheConfig) -> None:
+    """Create the torch hub checkpoint imagededup's duplicate detector loads."""
+    checkpoints = cache.torch_home / "hub" / "checkpoints"
+    checkpoints.mkdir(parents=True, exist_ok=True)
+    (checkpoints / cull_config.IMAGEDEDUP_MOBILENET_FILENAME).write_bytes(SAMPLE_BYTES)
+
+
 def test_hash_mismatch_is_corrupt(tmp_path: Path, monkeypatch) -> None:
     """A file with a pinned-but-mismatched sha256 must be flagged corrupt."""
     cache = _build_cache(tmp_path)
@@ -94,6 +101,7 @@ def test_hash_mismatch_is_corrupt(tmp_path: Path, monkeypatch) -> None:
     _seed_hf_repo(cache, cull_config.AESTHETIC_REPO_ID)
     _seed_hf_repo(cache, cull_config.DINOV2_REPO_ID)
     _seed_emotieff(cache)
+    _seed_torch_hub_checkpoint(cache)
     face_entry = cull_config.MODEL_MANIFEST["face_landmarker"].model_copy(
         update={"sha256": BOGUS_HASH}
     )
