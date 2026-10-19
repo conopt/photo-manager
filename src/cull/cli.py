@@ -48,8 +48,12 @@ from cull.cli_help import CullHelp, FAST_MODE_AVAILABLE  # noqa: E402, F401
 from cull.cli_bootstrap import (  # noqa: E402, F401
     SETUP_SUBCOMMAND_TOKEN, _is_setup_invocation, setup,
 )
+from cull.cuda_memory import (  # noqa: E402
+    apply_cuda_memory_fraction, cuda_memory_fraction_from_env,
+)
 
 BOOTSTRAP_EXIT_CODE: int = 1
+VALIDATION_EXIT_CODE: int = 1
 
 
 def _get_cli_pipeline_module() -> Any:
@@ -110,9 +114,34 @@ def _require_source(kwargs: dict) -> None:
     _get_cli_pipeline_module()._require_source(kwargs)
 
 
-def _run_with_dashboard(config: CullConfig, source: Path) -> object:
+def _run_with_dashboard(run_in: object) -> object:
     """Run the full pipeline with dashboard/error handling."""
-    return _get_cli_pipeline_module()._run_with_dashboard(config, source)
+    return _get_cli_pipeline_module()._run_with_dashboard(run_in)
+
+
+def _validate_run_flags(kwargs: dict) -> None:
+    """Validate --json-report and stage-checkpoint flags via the lazy-loaded pipeline module."""
+    _get_cli_pipeline_module()._validate_run_flags(kwargs)
+
+
+def _read_cuda_memory_fraction() -> float | None:
+    """Parse PHOTO_MANAGER_CUDA_MEMORY_FRACTION, exiting with a clear error when invalid."""
+    try:
+        return cuda_memory_fraction_from_env()
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(VALIDATION_EXIT_CODE)
+
+
+def _post_options(kwargs: dict, run_in: Any) -> dict:
+    """Return the PostPipelineInput fields shared by the standard and fast paths."""
+    return {
+        "report_flag": bool(kwargs["report"]),
+        "review_after": bool(kwargs.get("review_after", False)),
+        "json_report": kwargs.get("json_report"),
+        "progress_jsonl": bool(kwargs.get("progress_jsonl")),
+        "saved_state": run_in.save_state,
+    }
 
 
 def _validate_curate_stages(config: CullConfig) -> None:
@@ -140,22 +169,15 @@ def _run_fast_dispatch(kwargs: dict) -> None:
             "The cull_fast package is not installed. Install it to enable --fast.",
         )
         sys.exit(1)
-    from cull.pipeline import _PipelineRunInput  # noqa: PLC0415
     from cull_fast.cli_hook import run_fast_pipeline  # noqa: PLC0415
 
     pipe = _get_cli_pipeline_module()
     _require_source(kwargs)
     config = _build_config(kwargs)
-    source = Path(kwargs["source"])
-    run_in = _PipelineRunInput(
-        config=config, source_path=source, file_size_gb=pipe._compute_file_size_gb(source),
-    )
+    run_in = pipe._build_run_input(kwargs, config)
     result = run_fast_pipeline(run_in)
     _post_pipeline(pipe.PostPipelineInput(
-        result=result,
-        config=config,
-        report_flag=bool(kwargs["report"]),
-        review_after=bool(kwargs.get("review_after", False)),
+        result=result, config=config, **_post_options(kwargs, run_in),
     ))
 
 
@@ -164,12 +186,10 @@ def _run_standard_pipeline(kwargs: dict, config: CullConfig) -> None:
     pipe = _get_cli_pipeline_module()
     _require_source(kwargs)
     _validate_curate_stages(config)
-    result = _run_with_dashboard(config, Path(kwargs["source"]))
+    run_in = pipe._build_run_input(kwargs, config)
+    result = _run_with_dashboard(run_in)
     post_in = pipe.PostPipelineInput(
-        result=result,
-        config=config,
-        report_flag=bool(kwargs["report"]),
-        review_after=bool(kwargs["review_after"]),
+        result=result, config=config, **_post_options(kwargs, run_in),
     )
     _post_pipeline(post_in)
 
@@ -313,10 +333,41 @@ def _run_standard_pipeline(kwargs: dict, config: CullConfig) -> None:
     hidden=not FAST_MODE_AVAILABLE,
     help="Single-pass MUSIQ scoring (ablation surface; no speed claim until benchmarked).",
 )
+@click.option(
+    "--json-report",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Also write the full session result as JSON to PATH (every mode, including --dry-run).",
+)
+@click.option(
+    "--progress-jsonl",
+    is_flag=True,
+    default=False,
+    help="Report progress as one JSON object per line on stderr instead of the live display.",
+)
+@click.option(
+    "--stop-after-stage",
+    type=int,
+    default=None,
+    help="With 2 and --save-state: run Stages 1-2 only, save a checkpoint, and exit.",
+)
+@click.option(
+    "--save-state",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Checkpoint file written by --stop-after-stage 2.",
+)
+@click.option(
+    "--resume-state",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Resume from a Stage 1-2 checkpoint of the same SOURCE: run Stage 3, Stage 4 and routing.",
+)
 def _cull_pipeline_command(**kwargs: object) -> None:
     """Run the photo cull pipeline on SOURCE directory."""
     logging.getLogger("cull").setLevel(logging.INFO)
     kwargs["model"] = kwargs.get("model") or default_model_alias(kwargs.get("preset"))
+    cuda_memory_fraction = _read_cuda_memory_fraction()
     if kwargs.get("review_session"):
         _launch_review_session(kwargs["review_session"], _build_config(kwargs))
         return
@@ -326,6 +377,8 @@ def _cull_pipeline_command(**kwargs: object) -> None:
     _enforce_bootstrap_gate()
     _validate_subcommand_flags(kwargs)
     _validate_fast_conflicts(kwargs)
+    _validate_run_flags(kwargs)
+    apply_cuda_memory_fraction(cuda_memory_fraction)
     if _dispatch_subcommand(kwargs):
         return
     if kwargs.get("fast"):

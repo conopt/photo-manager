@@ -49,15 +49,22 @@ def _show_results(result: SessionResult, config: CullConfig) -> None:
 
 def _move_files(result: SessionResult, config: CullConfig) -> None:
     """Execute file moves silently, then show a completion line."""
+    counts = _execute_moves(result, config)
+    if counts is not None:
+        show_move_complete(*counts)
+
+
+def _execute_moves(result: SessionResult, config: CullConfig) -> tuple[int, int] | None:
+    """Move every non-keeper; return (moved, errors), or None when nothing moves."""
     movable = [d for d in result.decisions if d.decision != "keeper"]
     if not movable:
-        return
+        return None
     error_count = 0
     for decision in movable:
         entry = _execute_single_move(decision, config)
         if entry and not entry.is_success:
             error_count += 1
-    show_move_complete(len(movable), error_count)
+    return len(movable), error_count
 
 
 def _execute_single_move(decision: object, config: CullConfig) -> MoveEntry | None:

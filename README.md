@@ -103,8 +103,14 @@ This downloads and verifies:
 - **MediaPipe FaceLandmarker** — portrait and expression analysis
 - **DeepFace emotion** — facial expression classification
 - **pyiqa weights** — TOPIQ, CLIPIQA+ quality metrics
+- **MobileNetV3-Small** (torchvision) — the duplicate detector's CNN, stored in
+  the torch hub cache
 
 After setup, every `cull` invocation is fully offline.
+
+With `PHOTO_MANAGER_VLM_BASE_URL` set, setup validates the endpoint settings
+instead of looking for a local MLX model; the scoring models above are still
+downloaded.
 
 ## Usage
 
@@ -145,6 +151,47 @@ cull --explain /path/to/photo.jpg
 # Diagnostic report card from a session
 cull --report-card /path/to/photos
 ```
+
+### Automation
+
+These options let another program drive `cull`:
+
+- `--json-report PATH` writes the full session result (the `session_report.json`
+  schema) to PATH in every mode, including `--dry-run`. Every decision carries
+  a `reason`, the same one-line explanation the review screen shows, such as
+  `UNCERTAIN · composite 0.88 (keep ≥0.94) · VLM: eyes_closed`.
+- `--progress-jsonl` replaces the live display with one JSON object per line
+  on stderr, flushed as it is written. Each line has `stage` (`scan`,
+  `stage1`, `stage2`, `stage3` or `stage4`), `done`, `total` (`null` when
+  unknown) and `event` (`start`, `update`, `complete` or `error`). Sub-steps
+  add `substage` (`loading` and `reducer` in Stage 2; `peak`, `diversity`,
+  `tournament` and `narrative` in Stage 4); some lines add `seconds`,
+  `model`, `target` or `message`. Results cards are not printed.
+- `--dry-run` writes nothing into SOURCE: no moves, sidecars, session report
+  or embeddings cache.
+
+A run can be split into two processes, for example to give Stages 1-2 a GPU
+and run the VLM stages elsewhere:
+
+```bash
+# Phase 1: scan + Stages 1-2 only. No VLM settings are needed or used.
+cull --stop-after-stage 2 --save-state /tmp/shoot.npz /path/to/photos
+
+# Phase 2: Stage 3, Stage 4, routing — Stages 1-2 are not run again.
+cull --resume-state /tmp/shoot.npz --curate 50 /path/to/photos
+```
+
+Phase 1 records everything later stages read, then exits without routing
+files; with `--json-report` it reports the Stage 1-2 decisions. Phase 2 must
+use the same SOURCE: it refuses a checkpoint whose photos were added, removed
+or modified, or that was made with a different `--preset`, `--burst-gap` or
+`--portrait`/`--no-portrait`. Stage 3 and Stage 4 options (`--model`,
+`--no-vlm`, `--curate`, `--dry-run`, ...) belong to phase 2. The checkpoint
+is an uncompressed NumPy `.npz` archive with a versioned JSON `state` member
+and the duplicate-detector and CLIP embedding arrays. Outside the `event`
+preset, Stage 4 itself may still load the face landmarker and CLIP in phase 2
+for its peak-moment and shot-type checks, so phase 2 also needs the model
+cache.
 
 ### Presets
 
@@ -220,6 +267,7 @@ to match your local models.
 |---|---|---|
 | `PHOTO_MANAGER_VLM_ROOT` | `<repo>/models` | Directory containing MLX VLM model folders |
 | `PHOTO_MANAGER_CACHE` | `~/.cache/photo-manager/models` | Model cache root |
+| `PHOTO_MANAGER_CUDA_MEMORY_FRACTION` | unset | Cap this process's CUDA memory, a number in (0, 1]; applies only when CUDA is the selected device |
 | `PERF_CORPUS_PATH` | `<repo>/fixtures/easter_vigil` | Golden-baseline test corpus |
 
 ## Output

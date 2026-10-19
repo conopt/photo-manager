@@ -25,6 +25,8 @@ from cull.dashboard import (
     Dashboard,
     DashboardLaunchInfo,
 )
+from cull.decision_reason import annotate_reasons
+from cull.progress_jsonl import JsonlProgressDashboard
 from cull.models import (
     CurationResult,
     DecisionLabel,
@@ -65,6 +67,14 @@ from cull._pipeline.decision_assembly import (
     _build_all_decisions,
     _build_summary,
     _DecisionCtx,
+)
+from cull._pipeline.checkpoint import (
+    CheckpointData,
+    CheckpointLoadInput,
+    CheckpointSaveInput,
+    CheckpointTimings,
+    load_checkpoint,
+    save_checkpoint,
 )
 
 logger = logging.getLogger(__name__)
@@ -234,11 +244,22 @@ def _assemble_session(session_in: _SessionInput, ctx: _StageRunCtx) -> SessionRe
 
 
 class _PipelineRunInput(BaseModel):
-    """Input bundle for run_pipeline."""
+    """Input bundle for run_pipeline.
+
+    ``stop_after_stage=2`` runs the scan and Stages 1-2 only, writes a
+    checkpoint to ``save_state`` (when set), and returns the Stage 1-2
+    decisions without calling the VLM. ``resume_state`` loads such a
+    checkpoint and runs Stage 3, Stage 4 and decisions as an uninterrupted
+    run would, without running Stages 1-2 again.
+    """
 
     config: CullConfig
     source_path: Path
     file_size_gb: float = 0.0
+    progress_jsonl: bool = False
+    stop_after_stage: int | None = None
+    save_state: Path | None = None
+    resume_state: Path | None = None
 
 
 def run_pipeline(run_in: _PipelineRunInput) -> SessionResult:
@@ -265,6 +286,8 @@ def _make_dashboard(run_in: _PipelineRunInput) -> Dashboard:
         preset=run_in.config.preset,
         file_size_gb=run_in.file_size_gb,
     )
+    if run_in.progress_jsonl:
+        return JsonlProgressDashboard(launch_info)
     return Dashboard(launch_info)
 
 
@@ -314,6 +337,7 @@ def _finalize_run(state: _RunState, run_in: _PipelineRunInput) -> SessionResult:
     )
     decisions = _build_all_decisions(dec_ctx)
     curation = _run_s4(_S4RunInput(stages=state.stages, decisions=decisions, ctx=state.ctx))
+    annotate_reasons(decisions)
     session_in = _SessionInput(
         config=run_in.config, source_path=str(run_in.source_path),
         total_photos=len(state.paths), decisions=decisions,
@@ -376,11 +400,84 @@ def _run_with_session(
     it unloads when the ExitStack closes at the end of this function.
     """
     ctx = _build_run_ctx(run_in, dashboard)
+    if run_in.stop_after_stage == STAGE_IQA:
+        return _run_to_checkpoint(ctx, run_in)
+    resumed = _load_resume_state(ctx, run_in) if run_in.resume_state is not None else None
+    if resumed is not None:
+        run_in = run_in.model_copy(update={"source_path": ctx.source_path})
     _preflight_vlm(run_in.config)
     with contextlib.ExitStack() as stack:
         ctx.vlm_stack = stack
-        state = _execute_run(ctx)
+        state = _execute_run(ctx) if resumed is None else _execute_resumed(ctx, resumed)
         return _finalize_run(state, run_in)
+
+
+# ---------------------------------------------------------------------------
+# Stage checkpoint: stop after Stage 2, or resume from it
+# ---------------------------------------------------------------------------
+
+
+def _checkpoint_timings(ctx: _StageRunCtx, total: float) -> CheckpointTimings:
+    """Return the Stage 1-2 timings recorded on ctx."""
+    return CheckpointTimings(
+        stage1=ctx.timings.stage1, stage2=ctx.timings.stage2,
+        reducer=ctx.timings.reducer, total=total,
+    )
+
+
+def _run_to_checkpoint(ctx: _StageRunCtx, run_in: _PipelineRunInput) -> SessionResult:
+    """Run Stages 1-2, save the checkpoint, and return the Stage 1-2 decisions.
+
+    No VLM is preflighted, loaded or called. The returned session is what a
+    run without Stage 3 and Stage 4 would decide; it is assembled only after
+    the checkpoint is written, so it cannot change what a resume sees.
+    """
+    t_start = time.monotonic()
+    local = _run_local_stages(ctx)
+    total = time.monotonic() - t_start
+    if run_in.save_state is not None:
+        save_checkpoint(CheckpointSaveInput(
+            path=run_in.save_state, source_path=run_in.source_path, paths=ctx.paths,
+            config=ctx.config, timings=_checkpoint_timings(ctx, total),
+            s1_out=local.s1_out, s2_out=local.s2_out,
+        ))
+    config = ctx.config.model_copy(update={
+        "stages": [s for s in ctx.config.stages if s != STAGE_VLM], "curate_target": None,
+    })
+    ctx.config = config
+    state = _RunState(ctx=ctx, stages=_run_vlm_stages(ctx, local), paths=ctx.paths, total_seconds=total)
+    return _finalize_run(state, run_in.model_copy(update={"config": config}))
+
+
+def _load_resume_state(ctx: _StageRunCtx, run_in: _PipelineRunInput) -> CheckpointData:
+    """Load and validate the checkpoint, then use its source path spelling.
+
+    Stage 1-2 outputs are keyed by the photo paths of the checkpointed run;
+    the scanned photos were just checked to be the same files.
+    """
+    data = load_checkpoint(CheckpointLoadInput(
+        path=run_in.resume_state, source_path=run_in.source_path,
+        paths=ctx.paths, config=run_in.config,
+    ))
+    source = Path(data.state.source_path)
+    ctx.source_path = source
+    ctx.paths = [source / photo.path for photo in data.state.photos]
+    return data
+
+
+def _execute_resumed(ctx: _StageRunCtx, resumed: CheckpointData) -> _RunState:
+    """Run Stage 3 onwards on checkpointed Stage 1-2 outputs."""
+    t_start = time.monotonic()
+    timings = resumed.state.timings
+    ctx.timings.stage1 = timings.stage1
+    ctx.timings.stage2 = timings.stage2
+    ctx.timings.reducer = timings.reducer
+    local = _LocalStages(s1_out=resumed.s1_out, s2_out=resumed.s2_out)
+    stages = _run_vlm_stages(ctx, local)
+    return _RunState(
+        ctx=ctx, stages=stages, paths=ctx.paths,
+        total_seconds=timings.total + time.monotonic() - t_start,
+    )
 
 
 def _run_pipeline_impl(run_in: _PipelineRunInput) -> SessionResult:
@@ -391,14 +488,27 @@ def _run_pipeline_impl(run_in: _PipelineRunInput) -> SessionResult:
         return result
 
 
+class _LocalStages(BaseModel):
+    """Stage 1-2 outputs: everything a run has before the VLM is involved."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    s1_out: _Stage1Output
+    s2_out: _Stage2Output | None = None
+
+
 def _execute_stages_inline(ctx: _StageRunCtx) -> _StagesResult:
     """Run stages without opening a new dashboard context.
 
     The VLM loads (via `_load_vlm_if_needed`) after Stage 2 models unload,
     so Stage 1-2's torch/CLIP stack and the VLM are never resident together.
     """
+    return _run_vlm_stages(ctx, _run_local_stages(ctx))
+
+
+def _run_local_stages(ctx: _StageRunCtx) -> _LocalStages:
+    """Run Stage 1, Stage 2 with its reducer, and non-event moment stacks; free their models."""
     s2_out: _Stage2Output | None = None
-    s3_results: dict[str, Stage3Result] = {}
     s1_out = _run_s1(ctx)
     if STAGE_IQA in ctx.config.stages:
         s2_out = _run_s2(_S2RunInput(s1_out=s1_out, ctx=ctx))
@@ -406,18 +516,25 @@ def _execute_stages_inline(ctx: _StageRunCtx) -> _StagesResult:
         _unload_stage2_models()
     if not ctx.config.is_event:
         resolve_moment_stacks(s1_out, s2_out)
+    return _LocalStages(s1_out=s1_out, s2_out=s2_out)
+
+
+def _run_vlm_stages(ctx: _StageRunCtx, local: _LocalStages) -> _StagesResult:
+    """Load the VLM if needed, run Stage 3, and resolve event stacks."""
+    s3_results: dict[str, Stage3Result] = {}
     _load_vlm_if_needed(ctx)
     if STAGE_IQA in ctx.config.stages:
         s3_results = _run_s3_if_configured(
-            _S3MaybeRunInput(ctx=ctx, s2_out=s2_out, s1_out=s1_out),
+            _S3MaybeRunInput(ctx=ctx, s2_out=local.s2_out, s1_out=local.s1_out),
         )
+    s2_out = local.s2_out
     search_cache = s2_out.search_cache if s2_out is not None else None
     stages = _StagesResult(
-        s1_out=s1_out, s2_out=s2_out,
+        s1_out=local.s1_out, s2_out=s2_out,
         s3_results=s3_results, search_cache=search_cache,
     )
     if ctx.config.is_event:
-        resolve_event_stacks(s1_out, collect_event_scores(_event_route_input(stages)))
+        resolve_event_stacks(local.s1_out, collect_event_scores(_event_route_input(stages)))
     return stages
 
 

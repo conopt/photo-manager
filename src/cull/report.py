@@ -70,3 +70,10 @@ def write_report(session_result: SessionResult, overwrite: bool = False) -> Path
     _atomic_write_text(target, content)
     logger.info("Report written to %s", target)
     return target
+
+
+def write_json_report(session_result: SessionResult, target: Path) -> Path:
+    """Write the full SessionResult JSON to an explicit path, replacing it atomically."""
+    _atomic_write_text(target, _serialise(session_result))
+    logger.info("JSON report written to %s", target)
+    return target

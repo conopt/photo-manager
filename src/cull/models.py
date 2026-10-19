@@ -244,6 +244,7 @@ class PhotoDecision(BaseModel):
     override_from: DecisionLabel | None = None
     override_by: str | None = None
     stage_reached: int = 1
+    reason: str | None = None  # Plain-language "why" for the AI decision.
 
 
 # ---------------------------------------------------------------------------

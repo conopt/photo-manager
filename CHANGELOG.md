@@ -9,6 +9,22 @@
 - Optional OpenAI-compatible vision endpoint for scoring, explanations, and
   comparisons; local MLX inference remains available on Apple Silicon.
 - A Nix development shell and generated-image/HTTP integration tests.
+- `--json-report PATH` writes the full session result in every mode, including
+  `--dry-run`; each decision has a plain-language `reason`.
+- `--progress-jsonl` reports progress as JSON lines on stderr instead of the
+  live display.
+- `--stop-after-stage 2 --save-state PATH` and `--resume-state PATH` split a
+  run into a Stage 1-2 process and a Stage 3/4 process.
+- `PHOTO_MANAGER_CUDA_MEMORY_FRACTION` caps the process's CUDA memory.
+- `cull setup` downloads the duplicate detector's MobileNetV3 weights, so
+  offline runs no longer need to fetch them.
+
+### Fixed
+
+- Endpoint runs no longer fail after Stage 2 looking up the model's display
+  name in the local MLX registry (also in `--fast`).
+- `cull setup` with an endpoint configured no longer requires a local VLM.
+- `--dry-run` no longer writes the embeddings cache into the source directory.
 
 ### Changed
 

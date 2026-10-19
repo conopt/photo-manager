@@ -46,6 +46,7 @@ from cull.tui.previews import PREVIEW_CACHE_MAX_BYTES, prune_cache
 from cull.tui.score_panel import ScorePanel
 from cull.tui.screens import ConfirmQuitScreen, HelpScreen
 from cull.tui.timing import LatencyTimer, debug_log
+from cull.decision_reason import burst_winner_names
 from cull.tui.why_line import WhyContext, build_why_line
 
 __all__ = ["AppInput", "CullApp", "_apply_override"]
@@ -234,16 +235,6 @@ def _burst_group_id(decision: PhotoDecision) -> int | None:
     return decision.stage1.burst.group_id
 
 
-def _burst_winner_names(decisions: list[PhotoDecision]) -> dict[int, str]:
-    """Map burst group id to the filename Stage 1 picked as the sharpest frame."""
-    winners: dict[int, str] = {}
-    for decision in decisions:
-        burst = decision.stage1.burst if decision.stage1 else None
-        if burst is not None and burst.is_burst_winner:
-            winners[burst.group_id] = decision.photo.filename
-    return winners
-
-
 def _nearest_first(centre: int, total: int) -> list[int]:
     """Return queue positions ordered by distance from ``centre`` (centre first)."""
     order = [centre] if 0 <= centre < total else []
@@ -332,7 +323,7 @@ class CullApp(App):
         self._config = app_input.config
         self._ledger = ReviewLedger(self._session.decisions, str(self._session.source_path))
         self._paths = PathCache(self._config)
-        self._burst_winners = _burst_winner_names(self._session.decisions)
+        self._burst_winners = burst_winner_names(self._session.decisions)
         self.images = ImageService(self)
         self.faces = FaceService()
         self.latency = LatencyTimer()

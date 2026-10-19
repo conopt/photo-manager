@@ -57,6 +57,11 @@ _BASE_FLAG_ROWS: list[tuple[str, str, str]] = [
     ("--report-card", "Diagnostic report from session_report.json", "off"),
     ("--top-k N", "Number of search results to return", str(SEARCH_TOP_K_DEFAULT)),
     ("--no-sidecars", "Skip writing XMP sidecar files alongside source images", "off"),
+    ("--json-report PATH", "Also write the full session result as JSON to PATH (any mode)", "off"),
+    ("--progress-jsonl", "Progress as JSON lines on stderr instead of the live display", "off"),
+    ("--stop-after-stage 2", "With --save-state: run Stages 1-2, save a checkpoint, exit", "off"),
+    ("--save-state PATH", "Checkpoint file written by --stop-after-stage 2", "off"),
+    ("--resume-state PATH", "Resume a checkpoint of the same SOURCE: Stage 3, 4 and routing", "off"),
 ]
 _FAST_FLAG_ROW: tuple[str, str, str] = (
     "--fast",
