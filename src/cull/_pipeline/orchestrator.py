@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from cull.config import (
     CullConfig,
-    JPEG_EXTENSIONS,
+    IMAGE_EXTENSIONS,
     STAGE_IQA,
     STAGE_VLM,
 )
@@ -433,12 +433,12 @@ def _is_pipeline_output_path(path: Path, source_path: Path) -> bool:
 
 
 def _scan_with_dashboard(source_path: Path, dashboard: Dashboard) -> list[Path]:
-    """Scan for JPEGs while updating the dashboard's scan state."""
+    """Scan for supported images while updating the dashboard's scan state."""
     paths: list[Path] = []
     total_bytes = 0
     dashboard.begin_scan()
     for p in source_path.rglob("*"):
-        if not p.is_file() or p.suffix.lower() not in JPEG_EXTENSIONS:
+        if not p.is_file() or p.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
         if _is_pipeline_output_path(p, source_path):
             continue

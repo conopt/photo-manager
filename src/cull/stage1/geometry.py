@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
+from cull.image_io import read_cv_image
 from cull.models import GeometryScore
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def _empty_scores() -> GeometryScore:
 
 def _load_gray(image_path: Path) -> np.ndarray | None:
     """Load image from disk as grayscale; return None on failure."""
-    raw = cv2.imread(str(image_path), LSD_GRAYSCALE_FLAG)
+    raw = read_cv_image(str(image_path), LSD_GRAYSCALE_FLAG)
     if raw is None:
         logger.debug("geometry: cannot read %s", image_path)
         return None

@@ -26,6 +26,7 @@ from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cull.image_io import read_cv_image
 from cull.tui import previews
 from cull.tui.previews import PixelBox, Preview
 
@@ -266,10 +267,8 @@ def detect_landmarks(image: Any) -> list[list[_Point]]:
 
 def analyse_faces(source: Path) -> FaceReport:
     """Worker: detect, crop and grade up to MAX_FACES faces on a cached preview."""
-    import cv2  # noqa: PLC0415
-
     preview = previews.render_preview(previews.make_spec(source, FACE_PREVIEW_BOX))
-    image = cv2.imread(str(preview.path))
+    image = read_cv_image(str(preview.path))
     if image is None:
         return FaceReport(source=source, error="preview unreadable")
     try:

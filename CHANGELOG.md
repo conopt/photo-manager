@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- HIF, HEIF, and HEIC input across scanning, quality analysis, duplicate
+  detection, previews, and search, with orientation and EXIF capture metadata.
+- Optional OpenAI-compatible vision endpoint for scoring, explanations, and
+  comparisons; local MLX inference remains available on Apple Silicon.
+- A Nix development shell and generated-image/HTTP integration tests.
+
+### Changed
+
+- Linux installations no longer require MLX. Local scoring can use CUDA when
+  available, with MPS and CPU fallbacks.
+
 ## v1.4.0
 
 Calibration + TUI hardening. Everything trainable from existing data is now

@@ -66,10 +66,17 @@ def resolve_alias(alias: str, registry: VLMRegistry | None = None) -> VLMEntry:
 
 
 def run_vlm_preflight(alias: str = VLM_DEFAULT_ALIAS) -> None:
-    """Validate that `alias` resolves to a structurally valid VLM on disk.
+    """Validate endpoint settings, or resolve a structurally valid local model.
 
     Raises VLMResolutionError on failure. Never calls mlx_vlm.load().
     """
+    from cull.remote_vlm import remote_config
+
+    try:
+        if remote_config(alias) is not None:
+            return
+    except ValueError as exc:
+        raise VLMResolutionError(str(exc)) from None
     registry = discover_vlms()
     entry = resolve_alias(alias, registry)
     _validate_directory_structure(entry.directory)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cull.dashboard import DiskDisplayInfo, show_disk_selection
+from cull.config import IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ VOLUMES_ROOT: Path = Path("/Volumes")
 SYSTEM_VOLUME_NAMES: frozenset[str] = frozenset(
     {"Macintosh HD", "Preboot", "Recovery", "VM", "Data"}
 )
-JPEG_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg"})
+JPEG_SUFFIXES: frozenset[str] = IMAGE_EXTENSIONS
 
 
 @dataclass
@@ -85,7 +86,7 @@ def prompt_disk_selection(disks: list[DiskInfo]) -> Path:
 
 
 def scan_jpegs(path: Path) -> list[Path]:
-    """Recursively find all JPEG files under path (case-insensitive)."""
+    """Find supported images (name retained for compatibility; case-insensitive)."""
     return sorted(
         p for p in path.rglob("*")
         if p.is_file() and p.suffix.lower() in JPEG_SUFFIXES

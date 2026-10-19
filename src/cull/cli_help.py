@@ -23,7 +23,7 @@ _BASE_FLAG_ROWS: list[tuple[str, str, str]] = [
     ("--dry-run", "Preview decisions without moving any files", "off"),
     ("--no-vlm", "Skip Stage 3 (no VLM needed, faster)", "off"),
     ("--no-portrait", "Skip face/eye quality analysis (blink, sharpness, expression)", "off"),
-    ("--model TEXT", "VLM alias \u2014 see VLM_ALIASES", VLM_DEFAULT_ALIAS),
+    ("--model TEXT", "Local VLM alias or endpoint model ID", VLM_DEFAULT_ALIAS),
     ("--threshold FLOAT", "Stage 4 scene-cluster distance (higher = fewer, broader clusters)", "0.65"),
     ("--burst-gap FLOAT", "Max seconds between shots to group as burst", "0.5"),
     ("--preset NAME", "Genre scoring weights (see below)", "general"),

@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel
 
+from cull.image_io import read_cv_image
 from cull.config import (
     CullConfig,
     EXPOSURE_CAST_A_MAX,
@@ -141,7 +142,7 @@ def compute_color_cast(lab_image: np.ndarray) -> ColorCastResult:
 
 def _load_and_resize(image_path: Path) -> np.ndarray:
     """Load image from path and resize to long edge."""
-    img = cv2.imread(str(image_path))
+    img = read_cv_image(str(image_path))
     if img is None:
         raise ValueError(f"Cannot read image: {image_path}")
     return _resize_to_long_edge(img)

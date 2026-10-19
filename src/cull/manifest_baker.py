@@ -19,7 +19,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from cull.config import BURST_GAP_DEFAULT_SECONDS
+from cull.config import BURST_GAP_DEFAULT_SECONDS, IMAGE_EXTENSIONS
 from cull.stage1.burst import (
     cluster_by_time,
     confirm_burst_visually,
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 MANIFEST_FILENAME: str = "manifest.json"
 HASH_CHUNK_BYTES: int = 65536
-PHOTO_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg"})
+PHOTO_EXTENSIONS: frozenset[str] = IMAGE_EXTENSIONS
 JSON_INDENT: int = 2
 
 CATEGORY_REAL: str = "real"

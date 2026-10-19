@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import exifread
 import imagehash
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -17,6 +16,7 @@ from cull.config import (
     CullConfig,
 )
 from cull.stage1.representatives import is_within_moment_window
+from cull.image_io import read_exif_tags
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,7 @@ def _subsec_fraction(raw: object) -> timedelta | None:
 def _read_exif_capture(path: Path) -> CaptureTime | None:
     """Return EXIF DateTimeOriginal plus SubSecTimeOriginal for one file, or None."""
     try:
-        with open(path, "rb") as fh:
-            tags = exifread.process_file(fh, stop_tag="EXIF SubSecTimeOriginal", details=False)
+        tags = read_exif_tags(path, stop_tag="EXIF SubSecTimeOriginal", details=False)
         raw = tags.get("EXIF DateTimeOriginal")
         if raw is None:
             return None

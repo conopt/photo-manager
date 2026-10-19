@@ -10,8 +10,10 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 from pydantic import BaseModel, ConfigDict
+
+from cull.image_io import to_rgb_upright
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +121,7 @@ def decode_fitted(spec: PreviewSpec) -> Image.Image:
         target = _fit_pixels(oriented, spec.box)
         is_swapped = oriented != image.size
         image.draft("RGB", (target[1], target[0]) if is_swapped else target)
-        upright = ImageOps.exif_transpose(image)
-    upright = upright.convert("RGB")
+        upright = to_rgb_upright(image)
     if upright.size == target:
         return upright
     return upright.resize(target, Image.Resampling.BICUBIC, reducing_gap=2.0)

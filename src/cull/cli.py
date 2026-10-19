@@ -184,8 +184,9 @@ def _run_standard_pipeline(kwargs: dict, config: CullConfig) -> None:
     "--model",
     type=str,
     default=None,
+    envvar="PHOTO_MANAGER_VLM_MODEL",
     help=(
-        f"VLM alias (see --vlms). Default {VLM_DEFAULT_ALIAS}; "
+        f"Local VLM alias or endpoint model ID. Default {VLM_DEFAULT_ALIAS}; "
         f"{EVENT_VLM_ALIAS} for --preset event."
     ),
 )

@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import exifread
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from cull.config import CullConfig
+from cull.image_io import read_cv_image, read_exif_tags
 from cull.models import ExifSummary
 from cull.stage1.blur import (
     BlurResult,
@@ -118,8 +118,7 @@ def _build_exif_summary(tags: dict[str, Any]) -> ExifSummary | None:
 def _read_exif_summary(image_path: Path) -> tuple[datetime | None, ExifSummary | None]:
     """Read capture time and camera settings from EXIF in a single file pass."""
     try:
-        with open(image_path, "rb") as fh:
-            tags = exifread.process_file(fh, details=False, extract_thumbnail=False)
+        tags = read_exif_tags(image_path, details=False, extract_thumbnail=False)
     except OSError:
         logger.debug("EXIF read failed for %s", image_path)
         return None, None
@@ -128,8 +127,8 @@ def _read_exif_summary(image_path: Path) -> tuple[datetime | None, ExifSummary |
 
 def _decode_once(image_path: Path) -> _DecodedImage:
     """Read the image from disk once per required variant (color + grayscale)."""
-    raw_bgr = cv2.imread(str(image_path))
-    full_gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    raw_bgr = read_cv_image(str(image_path))
+    full_gray = read_cv_image(str(image_path), cv2.IMREAD_GRAYSCALE)
     if raw_bgr is None or full_gray is None:
         raise ValueError(f"Cannot read image: {image_path}")
     return _DecodedImage(

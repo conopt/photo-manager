@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from pydantic import BaseModel
 
+from cull.image_io import read_cv_image
 from cull.config import CullConfig, MOTION_PEAK_WINDOW
 from cull.models import PeakMomentScore
 
@@ -43,7 +44,7 @@ def _compute_flow_pair(prev_gray: np.ndarray, next_gray: np.ndarray) -> float:
 def _load_gray(path: Path) -> np.ndarray:
     """Load an image file as a grayscale uint8 array."""
     cv2 = _get_cv2()
-    frame = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    frame = read_cv_image(str(path), cv2.IMREAD_GRAYSCALE)
     if frame is None:
         raise ValueError(f"Cannot read image: {path}")
     return frame

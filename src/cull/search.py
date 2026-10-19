@@ -19,7 +19,7 @@ from cull.config import (
     CLIP_MODEL_ID,
     EMBEDDING_CACHE_FILENAME,
     EMBEDDING_INDEX_FILENAME,
-    JPEG_EXTENSIONS,
+    IMAGE_EXTENSIONS,
     SEARCH_TOP_K_DEFAULT,
 )
 from cull.io_silence import _silence_stdio
@@ -61,12 +61,11 @@ def _to_feature_tensor(features: object) -> object:
 
 
 def _scan_jpegs(source: Path) -> list[Path]:
-    """Return sorted list of all JPEG files found recursively under source."""
-    found: list[Path] = []
-    for ext in JPEG_EXTENSIONS:
-        found.extend(source.rglob(f"*{ext}"))
-        found.extend(source.rglob(f"*{ext.upper()}"))
-    return sorted(set(found))
+    """Return supported images recursively (name retained for API compatibility)."""
+    return sorted(
+        path for path in source.rglob("*")
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    )
 
 
 def _cache_valid(source: Path, paths: list[Path]) -> bool:

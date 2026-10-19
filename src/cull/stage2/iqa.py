@@ -39,7 +39,9 @@ _MODEL_LABELS: dict[str, str] = {
 
 
 def select_device() -> str:
-    """Return 'mps' if available, else 'cpu'."""
+    """Prefer CUDA, then MPS, with CPU as the portable fallback."""
+    if torch.cuda.is_available():
+        return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
@@ -69,6 +71,8 @@ CPU_FALLBACK: str = "cpu"
 def unload_metrics() -> None:
     """Release all cached IQA models and free memory."""
     _METRICS.clear()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
     logger.info("IQA metrics unloaded")

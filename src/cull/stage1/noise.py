@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel
 
+from cull.image_io import read_cv_image
 from cull.config import IMAGE_LONG_EDGE_PX, NOISE_SCORE_REJECT_MIN
 
 log = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def assess_noise_from_array(image: np.ndarray) -> NoiseResult:
 
 def _load_and_resize(image_path: Path) -> np.ndarray:
     """Load image from disk and resize to long-edge limit."""
-    img = cv2.imread(str(image_path))
+    img = read_cv_image(str(image_path))
     if img is None:
         raise ValueError(f"Cannot read image: {image_path}")
     return _resize_to_long_edge(img)

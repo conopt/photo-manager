@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from cull.image_io import read_cv_image
 from cull.config import (
     CullConfig,
     EYE_OPEN_THRESHOLD,
@@ -73,7 +74,7 @@ def _detect_blendshapes(image_path: Path) -> dict[str, float]:
     import cv2  # noqa: PLC0415
     import mediapipe as mp  # noqa: PLC0415
 
-    image = cv2.imread(str(image_path))
+    image = read_cv_image(str(image_path))
     if image is None:
         log.warning("Could not read image: %s", image_path)
         return {}

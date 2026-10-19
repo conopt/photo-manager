@@ -1,9 +1,9 @@
 # cull
 
-Local AI photo culling for macOS. Automatically selects the best photos from a
+Local AI photo culling for macOS and Linux. Automatically selects the best photos from a
 shoot using classical filters, neural image quality assessment, and an optional
-vision language model tiebreaker. Runs entirely offline after a one-time model
-download.
+vision language model tiebreaker. Local MLX inference runs entirely offline
+after a one-time model download; endpoint inference is optional.
 
 ## How it works
 
@@ -24,11 +24,55 @@ thresholds go to the VLM for a second opinion. The rest are rejected.
 
 ## Requirements
 
-- macOS (Apple Silicon recommended for VLM inference)
+- macOS with Apple Silicon for in-process MLX inference, or macOS/Linux with
+  an OpenAI-compatible vision endpoint for VLM inference
 - Python 3.11+
 - ~4 GB disk for the scoring model cache (one-time download), plus ~6 GB for
   the Stage 3 VLM if you use it
 - ~16 GB RAM recommended (peak ~8 GB with the default VLM)
+
+### Image formats
+
+JPEG (`.jpg`, `.jpeg`) and HEIF (`.hif`, `.heif`, `.heic`) are accepted,
+case-insensitively, by scanning, analysis, previews, and search. HEIF is decoded
+with `pillow-heif`/libheif, including its primary image's orientation and EXIF
+capture metadata. Embedded ICC profiles are converted to sRGB for analysis.
+Model inputs use 8-bit RGB, including for higher-bit-depth HEIF sources; this
+does not provide an HDR-aware quality evaluation. Originals retain their native
+format and metadata. Existing routing and `--dry-run` behavior also apply to HEIF.
+
+### OpenAI-compatible vision endpoints
+
+Set `PHOTO_MANAGER_VLM_BASE_URL` to enable endpoint inference. This bypasses
+local MLX model discovery and loading; `--model` is the server's model ID.
+The existing local MLX backend remains the default when the URL is unset.
+
+```bash
+export PHOTO_MANAGER_VLM_BASE_URL=http://localhost:8000/v1
+cull --model vision-model --dry-run /path/to/photos
+```
+
+`PHOTO_MANAGER_VLM_MODEL` can supply the model ID instead of `--model`.
+For authenticated servers, set `PHOTO_MANAGER_VLM_API_KEY` in the environment;
+it is sent as a Bearer token. `PHOTO_MANAGER_VLM_TIMEOUT` controls the request
+timeout in seconds (default 120). Do not put credentials in the URL.
+
+Scoring, explanations, and pairwise comparisons send resized, upright JPEG
+image data to the configured endpoint. Model-weight setup is not needed for
+the endpoint model, but the local scoring-model cache still needs `cull setup`.
+Endpoint inference is optional and sends photos to the server you select;
+only the MLX backend provides fully in-process inference.
+
+### Nix development environment
+
+```bash
+nix develop
+uv sync --extra dev
+uv run pytest -q
+```
+
+The shell provides Python, uv, and the native libraries used by Python wheels.
+MLX is installed only on Apple Silicon; Linux can use the endpoint backend.
 
 ## Install
 

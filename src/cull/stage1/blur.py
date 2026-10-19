@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
+from cull.image_io import read_cv_image
 from cull.config import (
     BLUR_MOTION_ANISOTROPY_RATIO,
     BLUR_SPATIAL_CENTER_FRACTION,
@@ -163,7 +164,7 @@ def _is_bokeh(subject_sharpness: float, background_sharpness: float) -> bool:
 
 def _load_and_resize(image_path: Path) -> np.ndarray:
     """Load image from disk and resize to long-edge limit."""
-    raw = cv2.imread(str(image_path))
+    raw = read_cv_image(str(image_path))
     if raw is None:
         raise ValueError(f"Cannot read image: {image_path}")
     return _resize_to_long_edge(raw)

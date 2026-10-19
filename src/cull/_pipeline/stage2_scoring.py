@@ -28,7 +28,7 @@ from cull.config import (
     SHARED_DECODE_PIXEL_PX,
     TILT_PENALTY_DEGREES,
 )
-from cull.image_io import open_rgb_upright
+from cull.image_io import open_rgb_upright, read_cv_image
 from cull.saliency import (
     SaliencyRequest,
     SaliencyResult,
@@ -390,7 +390,7 @@ def _apply_composition_to_scores(apply_in: _CompositionApplyInput) -> None:
 
 def _decode_full_res_bgr(path: Path) -> np.ndarray | None:
     """Decode a photo at full resolution as BGR for portrait analysis."""
-    image = cv2.imread(str(path))
+    image = read_cv_image(str(path))
     if image is None:
         logger.warning("Could not read image for portrait analysis: %s", path)
     return image

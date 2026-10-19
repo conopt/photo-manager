@@ -13,13 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import exifread
 from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from cull.config import REPORT_CARD_EXIF_SAMPLE_SIZE
+from cull.image_io import read_exif_tags
 from cull.models import (
     ExifPattern,
     ExifPatterns,
@@ -173,8 +173,7 @@ def _compute_reject_breakdown(session: SessionResult) -> RejectBreakdown:
 
 def _read_exif_tags(photo_path: Path) -> dict[str, Any]:
     """Read EXIF tags from one photo file using exifread."""
-    with photo_path.open("rb") as fh:
-        tags = exifread.process_file(fh, stop_tag="GPS GPSAltitude", details=False)
+    tags = read_exif_tags(photo_path, stop_tag="GPS GPSAltitude", details=False)
     return tags
 
 

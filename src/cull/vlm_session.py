@@ -17,6 +17,7 @@ from cull.config import (
     VLM_TEMPERATURE,
 )
 from cull.vlm_registry import VLMEntry, resolve_alias
+from cull.remote_vlm import RemoteVlmConfig, generate_remote, remote_config
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
@@ -48,20 +49,23 @@ class VlmGenerateInput(BaseModel):
 
 
 class VlmSession(BaseModel):
-    """Thin stateful wrapper around a loaded mlx_vlm model + processor."""
+    """One local MLX model or an opt-in endpoint inference session."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    entry: VLMEntry
+    entry: VLMEntry | None = None
+    remote: RemoteVlmConfig | None = None
     model: Any = None
     processor: Any = None
     config: Any = None
     image_mode: str = ""  # "" = undetermined; set on the first generate() call
 
     def generate(self, call_in: VlmGenerateInput) -> str:
-        """Resize each input image and run one mlx_vlm.generate() call, return raw text."""
-        if self.model is None:
+        """Resize input images and return raw assistant text from the backend."""
+        if self.model is None and self.remote is None:
             raise RuntimeError("VlmSession.generate() called after unload()")
         images = [_resize_image_for_vlm(p) for p in call_in.images]
+        if self.remote is not None:
+            return generate_remote(self.remote, call_in, images)
         if self.image_mode == IMAGE_MODE_TEMPFILE:
             return self._generate_tempfile(call_in, images)
         return self._generate_direct(call_in, images)
@@ -117,6 +121,9 @@ class VlmSession(BaseModel):
 
     def unload(self) -> None:
         """Drop references and call gc.collect() + mx.clear_cache()."""
+        if self.remote is not None:
+            self.remote = None
+            return
         import gc  # noqa: PLC0415
 
         self.model = None
@@ -133,14 +140,14 @@ class VlmSession(BaseModel):
 
 @contextmanager
 def vlm_session(alias: str) -> Iterator[VlmSession]:
-    """Context-manager that owns one mlx_vlm load/unload cycle.
+    """Own a local MLX load/unload cycle or an endpoint session.
 
     Raises:
         VLMResolutionError: if alias does not resolve to a discovered VLM.
         VlmLoadError: if mlx_vlm.load() or config.json parse fails.
     """
-    entry = resolve_alias(alias)
-    session = _load_session(entry)
+    remote = remote_config(alias)
+    session = VlmSession(remote=remote) if remote is not None else _load_session(resolve_alias(alias))
     try:
         yield session
     finally:
@@ -149,7 +156,13 @@ def vlm_session(alias: str) -> Iterator[VlmSession]:
 
 def _get_mlx_vlm() -> Any:
     """Lazy-import mlx_vlm and return the module."""
-    import mlx_vlm  # noqa: PLC0415
+    try:
+        import mlx_vlm  # noqa: PLC0415
+    except ImportError:
+        raise VlmLoadError(
+            "Local inference requires MLX on Apple Silicon. "
+            "For endpoint inference, set PHOTO_MANAGER_VLM_BASE_URL and use --model."
+        ) from None
 
     return mlx_vlm
 

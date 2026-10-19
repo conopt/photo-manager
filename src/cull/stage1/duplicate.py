@@ -31,11 +31,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from cull import dinov2_loader
 from cull.config import (
     BLUR_CNN_SIMILARITY_EXACT,
+    IMAGE_EXTENSIONS,
     DINOV2_DUPLICATE_SIMILARITY,
     DINOV2_EMBED_BATCH_SIZE,
     DINOV2_NEAR_IDENTICAL_SIMILARITY,
 )
-from cull.image_io import open_rgb_upright
+from cull.image_io import is_heif, open_rgb_upright
 from cull.router import CURATED_DIR, REVIEW_DIR
 from cull.stage1.burst import read_exif_capture_time
 from cull.stage1.representatives import is_within_moment_window
@@ -246,7 +247,22 @@ def _run_cnn_encoding(cnn: object, image_dir: Path) -> tuple[dict, dict]:
 
     threshold = BLUR_CNN_SIMILARITY_EXACT
     with _silence_stdio():
-        raw_encodings = cnn.encode_images(image_dir=str(image_dir), recursive=True)  # type: ignore[attr-defined]
+        paths = sorted(
+            path for path in image_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+            and not _is_pipeline_output_name(str(path.relative_to(image_dir)))
+        )
+        if any(is_heif(path) for path in paths):
+            # imagededup's directory loader rejects HEIF even with a Pillow
+            # plugin registered. Its public array API accepts decoded pixels.
+            raw_encodings = {
+                str(path.relative_to(image_dir)): cnn.encode_image(  # type: ignore[attr-defined]
+                    image_array=np.asarray(open_rgb_upright(path)),
+                )
+                for path in paths
+            }
+        else:
+            raw_encodings = cnn.encode_images(image_dir=str(image_dir), recursive=True)  # type: ignore[attr-defined]
         raw_encodings = _exclude_pipeline_output(raw_encodings)
         duplicates_map = cnn.find_duplicates(  # type: ignore[attr-defined]
             encoding_map=raw_encodings,

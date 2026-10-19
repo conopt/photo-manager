@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel
 
+from cull.image_io import read_cv_image
 from cull.config import (
     FACE_LANDMARKER_FILENAME,
     PORTRAIT_NUM_FACES_MAX,
@@ -468,7 +469,7 @@ def detect_expression_from_array(image: np.ndarray) -> str:
 
 def detect_expression(image_path: Path) -> str:
     """Return dominant emotion string for a face-cropped image path; log errors, return empty."""
-    image = cv2.imread(str(image_path))
+    image = read_cv_image(str(image_path))
     if image is None:
         log.error("Could not read image: %s", image_path)
         return ""
@@ -521,7 +522,7 @@ def assess_portrait(image_path: Path, config: CullConfig) -> PortraitResult:
     """Load image at full resolution and return full PortraitResult (thin path wrapper)."""
     if not config.is_portrait:
         return PortraitResult(face_count=0)
-    image = cv2.imread(str(image_path))
+    image = read_cv_image(str(image_path))
     if image is None:
         log.error("Could not read image: %s", image_path)
         return PortraitResult(face_count=0)
