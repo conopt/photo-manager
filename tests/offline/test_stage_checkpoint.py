@@ -109,6 +109,16 @@ def _forbid_local_stages(monkeypatch: pytest.MonkeyPatch, calls) -> None:
     monkeypatch.setattr("cull._pipeline.orchestrator._run_s2", forbidden)
 
 
+def _forbid_vlm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make Stage 3, a VLM preflight or a VLM session fail the test."""
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the VLM was used during a Stage 3 resume")
+
+    for name in ("_run_s3_if_configured", "run_vlm_preflight", "vlm_session"):
+        monkeypatch.setattr(f"cull._pipeline.orchestrator.{name}", forbidden)
+
+
 # ---------------------------------------------------------------------------
 # Endpoint display name
 # ---------------------------------------------------------------------------
@@ -249,6 +259,85 @@ def test_event_checkpoint_resume_matches_uninterrupted_curation(
     assert _outcome(resumed) == _outcome(full)
 
 
+def _stage3_forbidden(*args: object) -> None:
+    """Fail the test when Stage 3 runs."""
+    raise AssertionError("Stage 3 ran during a Stage 3 resume")
+
+
+def test_event_stage3_checkpoint_recurates_any_target_without_the_vlm(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stage 2 -> Stage 3 -> Stage 4 processes curate each target exactly as uninterrupted runs do."""
+    calls = install_fake_local_stages(monkeypatch)
+    scored, judged = tmp_path / "scored.npz", tmp_path / "judged.npz"
+
+    def run(target: int | None, **options: object) -> SessionResult:
+        config = CullConfig(
+            model=ENDPOINT_MODEL, preset="event", is_portrait=False, is_dry_run=True, curate_target=target,
+        )
+        return run_pipeline(_PipelineRunInput(config=config, source_path=source, progress_jsonl=True, **options))
+
+    with vlm_endpoint(monkeypatch) as log:
+        full3, full2 = run(3), run(2)
+        run(None, stop_after_stage=2, save_state=scored)
+        _forbid_local_stages(monkeypatch, calls)
+        before = len(log.models)
+        provisional = run(3, resume_state=scored, stop_after_stage=3, save_state=judged)
+        stage3_requests = len(log.models) - before
+        _forbid_vlm(monkeypatch)
+        resumed3, resumed2 = run(3, resume_state=judged), run(2, resume_state=judged)
+    assert stage3_requests > 0 and len(log.models) == before + stage3_requests
+    assert provisional.curation is None and any(d.stage3 is not None for d in provisional.decisions)
+    assert full2.curation is not None and full2.curation.actual_count == 2
+    assert _outcome(resumed3) == _outcome(full3)
+    assert _outcome(resumed2) == _outcome(full2)
+
+
+def test_stage3_checkpoint_resume_matches_uninterrupted_run(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cull_cli,
+) -> None:
+    """A Stage 3 checkpoint from one process resumes into Stage 4 without repeating Stage 3."""
+    calls = install_fake_local_stages(monkeypatch)
+    common = (source, "--model", ENDPOINT_MODEL, "--no-portrait", "--dry-run", "--curate", "50")
+    judged = tmp_path / "judged.npz"
+    with vlm_endpoint(monkeypatch) as log:
+        full = cull_cli(*common, "--json-report", tmp_path / "full.json")
+        assert full.exit_code == 0, full.output
+        full_requests = len(log.models)
+        stopped = cull_cli(*common, "--stop-after-stage", 3, "--save-state", judged)
+        assert stopped.exit_code == 0, stopped.output
+        assert f"Stage 3 checkpoint written to {judged}" in stopped.output
+        _forbid_local_stages(monkeypatch, calls)
+        monkeypatch.setattr("cull._pipeline.orchestrator._run_s3_if_configured", _stage3_forbidden)
+        resumed = cull_cli(*common, "--resume-state", judged,
+                           "--progress-jsonl", "--json-report", tmp_path / "resumed.json")
+        assert resumed.exit_code == 0, resumed.output
+    assert len(log.models) == 2 * full_requests > 0, "Stage 3 once per process, Stage 4 once"
+    assert _outcome(_report(tmp_path / "resumed.json")) == _outcome(_report(tmp_path / "full.json"))
+    assert {"stage1", "stage2", "stage3"}.isdisjoint(line["stage"] for line in _progress_lines(resumed.stderr))
+
+
+def test_stage3_resume_rejects_another_model_and_a_second_stage3(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cull_cli,
+) -> None:
+    """Stage 3 results belong to their VLM, and a Stage 3 checkpoint cannot run Stage 3 again."""
+    install_fake_local_stages(monkeypatch)
+    judged = tmp_path / "judged.npz"
+    with vlm_endpoint(monkeypatch):
+        run = cull_cli(source, "--model", ENDPOINT_MODEL, "--no-portrait", "--dry-run",
+                       "--stop-after-stage", 3, "--save-state", judged, "--progress-jsonl")
+        assert run.exit_code == 0, run.output
+        other = cull_cli(source, "--model", "other-model", "--no-portrait", "--dry-run",
+                         "--resume-state", judged, "--progress-jsonl")
+        again = cull_cli(source, "--model", ENDPOINT_MODEL, "--no-portrait", "--dry-run", "--resume-state", judged,
+                         "--stop-after-stage", 3, "--save-state", tmp_path / "again.npz", "--progress-jsonl")
+    assert other.exit_code == 1
+    assert "model" in _progress_lines(other.stderr)[-1]["message"]
+    assert again.exit_code == 1
+    assert "already holds Stage 3 results" in _progress_lines(again.stderr)[-1]["message"]
+    assert not (tmp_path / "again.npz").exists()
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint validation and format
 # ---------------------------------------------------------------------------
@@ -336,7 +425,9 @@ def test_checkpoint_round_trips_scores_and_arrays_exactly(source: Path, tmp_path
 
 
 @pytest.mark.parametrize("args,message", [
-    (["--stop-after-stage", "3", "--save-state", "s.npz"], "supports only 2"),
+    (["--stop-after-stage", "4", "--save-state", "s.npz"], "supports only 2 or 3"),
+    (["--stop-after-stage", "3", "--save-state", "s.npz", "--no-vlm"], "needs Stage 3"),
+    (["--stop-after-stage", "2", "--save-state", "s.npz", "--resume-state", "staging/preview03.jpg"], "cannot be combined"),
     (["--stop-after-stage", "2"], "must be given together"),
     (["--save-state", "s.npz"], "must be given together"),
     (["--stop-after-stage", "2", "--save-state", "s.npz", "--stage", "1"], "need Stages 1 and 2"),

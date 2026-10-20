@@ -1,12 +1,19 @@
-"""Stage checkpoint: persist Stages 1-2 so Stage 3, Stage 4 and routing run later.
+"""Stage checkpoint: persist Stages 1-2 (or 1-3) so the later stages run later.
+
+A Stage 2 checkpoint lets Stage 3, Stage 4 and routing run in another
+process; a Stage 3 checkpoint also holds the VLM's Stage 3 results, so a
+resume runs only Stage 4 and routing (for example, to curate a different
+number of photos without calling the VLM again).
 
 A checkpoint is one uncompressed NumPy ``.npz`` archive, loaded with
 ``allow_pickle=False``, holding three members:
 
 - ``state``: UTF-8 JSON (``CheckpointState``) with the format name and
-  version, the source directory, a fingerprint of every scanned photo, the
-  config fields that shaped Stages 1-2, their timings, and the Stage 1 and
-  Stage 2 outputs (moment stacks, duplicate groups, routing lists, scores).
+  version, the stage it stops after, the source directory, a fingerprint of
+  every scanned photo, the config fields that shaped the checkpointed
+  stages, their timings, and the Stage 1 and Stage 2 outputs (moment stacks,
+  duplicate groups, routing lists, scores), plus Stage 3 results for a
+  Stage 3 checkpoint.
 - ``encodings``: the duplicate detector's per-photo CNN embeddings, one row
   per ``state.encoding_keys`` entry (Stage 4 clustering reads them).
 - ``search_embeddings``: the L2-normalised CLIP rows, one per
@@ -31,17 +38,20 @@ from pydantic import BaseModel, Field, ValidationError
 from cull._pipeline.stage1_runner import _Stage1Output
 from cull._pipeline.stage2_runner import _Stage2Output
 from cull._pipeline.stage2_scoring import _SearchCache
-from cull.config import CullConfig
+from cull.config import STAGE_IQA, STAGE_VLM, CullConfig
+from cull.models import Stage3Result
 
 CHECKPOINT_FORMAT: str = "cull-stage-checkpoint"
 CHECKPOINT_VERSION: int = 1
-CHECKPOINT_STAGE: int = 2
+CHECKPOINT_STAGES: tuple[int, ...] = (STAGE_IQA, STAGE_VLM)
 _STATE_MEMBER: str = "state"
 _ENCODINGS_MEMBER: str = "encodings"
 _SEARCH_MEMBER: str = "search_embeddings"
 _MISMATCH_EXAMPLES: int = 3
 # CullConfig fields that change Stage 1-2 output; a resume must use the same values.
 STAGE12_CONFIG_FIELDS: tuple[str, ...] = ("preset", "burst_gap", "is_portrait")
+# Stage 3 results also depend on the VLM that produced them.
+STAGE3_CONFIG_FIELDS: tuple[str, ...] = (*STAGE12_CONFIG_FIELDS, "model")
 
 
 class CheckpointError(RuntimeError):
@@ -62,6 +72,7 @@ class CheckpointTimings(BaseModel):
     stage1: float = 0.0
     stage2: float = 0.0
     reducer: float = 0.0
+    stage3: float = 0.0
     total: float = 0.0
 
 
@@ -70,7 +81,7 @@ class CheckpointState(BaseModel):
 
     format: Literal["cull-stage-checkpoint"] = CHECKPOINT_FORMAT
     version: int = CHECKPOINT_VERSION
-    stage: int = CHECKPOINT_STAGE
+    stage: int = STAGE_IQA
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     source_path: str
     photos: list[PhotoFingerprint]
@@ -80,6 +91,7 @@ class CheckpointState(BaseModel):
     s2_out: _Stage2Output | None = None
     encoding_keys: list[str] = Field(default_factory=list)
     search_paths: list[str] | None = None
+    s3_results: dict[str, Stage3Result] | None = None  # Stage 3 checkpoints only.
 
 
 class CheckpointData(BaseModel):
@@ -90,10 +102,14 @@ class CheckpointData(BaseModel):
     state: CheckpointState
     s1_out: _Stage1Output
     s2_out: _Stage2Output | None = None
+    s3_results: dict[str, Stage3Result] | None = None
 
 
 class CheckpointSaveInput(BaseModel):
-    """Everything a checkpoint records about a finished Stage 1-2 run."""
+    """Everything a checkpoint records about a finished Stage 1-2 (or 1-3) run.
+
+    With ``s3_results`` set the checkpoint stops after Stage 3.
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -104,6 +120,7 @@ class CheckpointSaveInput(BaseModel):
     timings: CheckpointTimings
     s1_out: _Stage1Output
     s2_out: _Stage2Output | None = None
+    s3_results: dict[str, Stage3Result] | None = None
 
 
 class CheckpointLoadInput(BaseModel):
@@ -131,9 +148,14 @@ def fingerprint_photos(source_path: Path, paths: list[Path]) -> list[PhotoFinger
     return fingerprints
 
 
-def _stage12_config(config: CullConfig) -> dict[str, object]:
-    """Return the config fields that shaped Stage 1-2 output."""
-    return {name: getattr(config, name) for name in STAGE12_CONFIG_FIELDS}
+def _config_fields(stage: int) -> tuple[str, ...]:
+    """Return the CullConfig fields that shape the output of Stages 1 to ``stage``."""
+    return STAGE3_CONFIG_FIELDS if stage == STAGE_VLM else STAGE12_CONFIG_FIELDS
+
+
+def _stage_config(config: CullConfig, stage: int) -> dict[str, object]:
+    """Return the config fields that shaped the checkpointed stages."""
+    return {name: getattr(config, name) for name in _config_fields(stage)}
 
 
 def _encoding_matrix(encodings: dict[str, object]) -> tuple[list[str], np.ndarray]:
@@ -170,12 +192,13 @@ def _build_state(save_in: CheckpointSaveInput) -> tuple[CheckpointState, np.ndar
     encoding_keys, encodings = _encoding_matrix(save_in.s1_out.encodings)
     cache = save_in.s2_out.search_cache if save_in.s2_out is not None else None
     search_paths, search = _search_arrays(cache)
+    stage = STAGE_IQA if save_in.s3_results is None else STAGE_VLM
     state = CheckpointState(
-        source_path=str(save_in.source_path),
+        stage=stage, source_path=str(save_in.source_path),
         photos=fingerprint_photos(save_in.source_path, save_in.paths),
-        config=_stage12_config(save_in.config), timings=save_in.timings,
+        config=_stage_config(save_in.config, stage), timings=save_in.timings,
         s1_out=save_in.s1_out, s2_out=save_in.s2_out,
-        encoding_keys=encoding_keys, search_paths=search_paths,
+        encoding_keys=encoding_keys, search_paths=search_paths, s3_results=save_in.s3_results,
     )
     return state, encodings, search
 
@@ -272,11 +295,11 @@ def _check_source(state: CheckpointState, load_in: CheckpointLoadInput) -> None:
 
 
 def _check_config(state: CheckpointState, config: CullConfig) -> None:
-    """Require the config fields that shaped Stage 1-2 to be unchanged."""
-    current = _stage12_config(config)
+    """Require the config fields that shaped the checkpointed stages to be unchanged."""
+    current = _stage_config(config, state.stage)
     differing = [
         f"{name} (checkpoint {state.config.get(name)!r}, now {current[name]!r})"
-        for name in STAGE12_CONFIG_FIELDS if state.config.get(name) != current[name]
+        for name in _config_fields(state.stage) if state.config.get(name) != current[name]
     ]
     if differing:
         raise CheckpointError(f"options differ from the checkpointed run: {', '.join(differing)}")
@@ -286,9 +309,11 @@ def load_checkpoint(load_in: CheckpointLoadInput) -> CheckpointData:
     """Read and validate a checkpoint against this run's source, photos and config."""
     members = _read_members(load_in.path)
     state = _parse_state(members[_STATE_MEMBER], load_in.path)
-    if state.stage != CHECKPOINT_STAGE:
-        raise CheckpointError(f"{load_in.path} stops after stage {state.stage}; only stage 2 can resume")
+    if state.stage not in CHECKPOINT_STAGES or (state.s3_results is None) != (state.stage == STAGE_IQA):
+        raise CheckpointError(f"{load_in.path} stops after stage {state.stage}; only stages 2 and 3 can resume")
     _check_source(state, load_in)
     _check_config(state, load_in.config)
     _restore_arrays(state, members)
-    return CheckpointData(state=state, s1_out=state.s1_out, s2_out=state.s2_out)
+    return CheckpointData(
+        state=state, s1_out=state.s1_out, s2_out=state.s2_out, s3_results=state.s3_results,
+    )

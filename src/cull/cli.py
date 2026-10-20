@@ -141,6 +141,7 @@ def _post_options(kwargs: dict, run_in: Any) -> dict:
         "json_report": kwargs.get("json_report"),
         "progress_jsonl": bool(kwargs.get("progress_jsonl")),
         "saved_state": run_in.save_state,
+        "saved_stage": run_in.stop_after_stage,
     }
 
 
@@ -349,19 +350,22 @@ def _run_standard_pipeline(kwargs: dict, config: CullConfig) -> None:
     "--stop-after-stage",
     type=int,
     default=None,
-    help="With 2 and --save-state: run Stages 1-2 only, save a checkpoint, and exit.",
+    help="With 2 or 3 and --save-state: run Stages 1-2 (or 1-3), save a checkpoint, and exit.",
 )
 @click.option(
     "--save-state",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Checkpoint file written by --stop-after-stage 2.",
+    help="Checkpoint file written by --stop-after-stage 2 or 3.",
 )
 @click.option(
     "--resume-state",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Resume from a Stage 1-2 checkpoint of the same SOURCE: run Stage 3, Stage 4 and routing.",
+    help=(
+        "Resume a checkpoint of the same SOURCE: run the stages after it, Stage 4 and routing. "
+        "A Stage 2 checkpoint may be resumed into --stop-after-stage 3."
+    ),
 )
 def _cull_pipeline_command(**kwargs: object) -> None:
     """Run the photo cull pipeline on SOURCE directory."""

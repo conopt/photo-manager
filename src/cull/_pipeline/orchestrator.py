@@ -70,6 +70,7 @@ from cull._pipeline.decision_assembly import (
 )
 from cull._pipeline.checkpoint import (
     CheckpointData,
+    CheckpointError,
     CheckpointLoadInput,
     CheckpointSaveInput,
     CheckpointTimings,
@@ -171,6 +172,7 @@ class _StageRunCtx(BaseModel):
     dashboard: Any = None  # Dashboard instance
     vlm_session: Any = None  # VlmSession — Any avoids import cycle
     vlm_stack: Any = None  # ExitStack owning the lazy VLM load/unload for this run
+    stage3_cached: bool = False  # Stage 3 results come from a Stage 3 checkpoint
 
 
 # `_S2RunInput` uses a forward reference to `_StageRunCtx`, and
@@ -248,9 +250,12 @@ class _PipelineRunInput(BaseModel):
 
     ``stop_after_stage=2`` runs the scan and Stages 1-2 only, writes a
     checkpoint to ``save_state`` (when set), and returns the Stage 1-2
-    decisions without calling the VLM. ``resume_state`` loads such a
-    checkpoint and runs Stage 3, Stage 4 and decisions as an uninterrupted
-    run would, without running Stages 1-2 again.
+    decisions without calling the VLM. ``stop_after_stage=3`` also runs
+    Stage 3 (resuming a Stage 2 checkpoint when ``resume_state`` is set),
+    writes a Stage 3 checkpoint, and returns the decisions without Stage 4.
+    ``resume_state`` alone loads either checkpoint and runs the remaining
+    stages and decisions as an uninterrupted run would, without running the
+    checkpointed stages again.
     """
 
     config: CullConfig
@@ -347,14 +352,16 @@ def _finalize_run(state: _RunState, run_in: _PipelineRunInput) -> SessionResult:
     return _assemble_session(session_in, state.ctx)
 
 
-def _needs_vlm(config: CullConfig) -> bool:
+def _needs_vlm(config: CullConfig, stage3_cached: bool = False) -> bool:
     """Return True if Stage 3 or the Stage 4 curator will need a VLM session.
 
     The event curator never calls the VLM, so only Stage 3 needs it there.
+    Stage 3 results loaded from a checkpoint need no VLM.
     """
+    runs_stage3 = STAGE_VLM in config.stages and not stage3_cached
     if config.is_event:
-        return STAGE_VLM in config.stages
-    return STAGE_VLM in config.stages or config.curate_target is not None
+        return runs_stage3
+    return runs_stage3 or config.curate_target is not None
 
 
 def _resolve_vlm_session_scope(
@@ -372,20 +379,20 @@ def _resolve_vlm_session_scope(
     return contextlib.nullcontext()
 
 
-def _preflight_vlm(config: CullConfig) -> None:
+def _preflight_vlm(ctx: _StageRunCtx) -> None:
     """Fail fast on an unresolvable VLM alias before any stage runs.
 
     Resolves the alias and checks the on-disk directory structure without
     calling mlx_vlm.load(), so a bad --model value is caught before an
     expensive Stage 1-2 run instead of after it.
     """
-    if _needs_vlm(config):
-        run_vlm_preflight(config.model)
+    if _needs_vlm(ctx.config, ctx.stage3_cached):
+        run_vlm_preflight(ctx.config.model)
 
 
 def _load_vlm_if_needed(ctx: _StageRunCtx) -> None:
     """Enter the VLM session CM into ctx.vlm_stack once Stage 2 memory is freed."""
-    if ctx.vlm_stack is None or not _needs_vlm(ctx.config):
+    if ctx.vlm_stack is None or not _needs_vlm(ctx.config, ctx.stage3_cached):
         return
     ctx.vlm_session = ctx.vlm_stack.enter_context(vlm_session(ctx.config.model))
 
@@ -405,7 +412,9 @@ def _run_with_session(
     resumed = _load_resume_state(ctx, run_in) if run_in.resume_state is not None else None
     if resumed is not None:
         run_in = run_in.model_copy(update={"source_path": ctx.source_path})
-    _preflight_vlm(run_in.config)
+    if run_in.stop_after_stage == STAGE_VLM:
+        return _run_to_stage3_checkpoint(ctx, run_in, resumed)
+    _preflight_vlm(ctx)
     with contextlib.ExitStack() as stack:
         ctx.vlm_stack = stack
         state = _execute_run(ctx) if resumed is None else _execute_resumed(ctx, resumed)
@@ -413,15 +422,15 @@ def _run_with_session(
 
 
 # ---------------------------------------------------------------------------
-# Stage checkpoint: stop after Stage 2, or resume from it
+# Stage checkpoint: stop after Stage 2 or 3, or resume from it
 # ---------------------------------------------------------------------------
 
 
 def _checkpoint_timings(ctx: _StageRunCtx, total: float) -> CheckpointTimings:
-    """Return the Stage 1-2 timings recorded on ctx."""
+    """Return the Stage 1-3 timings recorded on ctx."""
     return CheckpointTimings(
         stage1=ctx.timings.stage1, stage2=ctx.timings.stage2,
-        reducer=ctx.timings.reducer, total=total,
+        reducer=ctx.timings.reducer, stage3=ctx.timings.stage3, total=total,
     )
 
 
@@ -449,6 +458,44 @@ def _run_to_checkpoint(ctx: _StageRunCtx, run_in: _PipelineRunInput) -> SessionR
     return _finalize_run(state, run_in.model_copy(update={"config": config}))
 
 
+def _run_to_stage3_checkpoint(
+    ctx: _StageRunCtx, run_in: _PipelineRunInput, resumed: CheckpointData | None,
+) -> SessionResult:
+    """Run Stages 1-3 (or Stage 3 on a Stage 2 checkpoint), save a Stage 3 checkpoint.
+
+    Returns what a run without Stage 4 decides. The Stage 3 results are saved
+    before event stacks are resolved from them, so a resume repeats that step
+    exactly as an uninterrupted run does.
+    """
+    if resumed is not None and resumed.s3_results is not None:
+        raise CheckpointError(
+            f"{run_in.resume_state} already holds Stage 3 results; resume it without --stop-after-stage"
+        )
+    config = ctx.config.model_copy(update={"curate_target": None})
+    ctx.config = config
+    run_in = run_in.model_copy(update={"config": config})
+    _preflight_vlm(ctx)
+    t_start = time.monotonic()
+    with contextlib.ExitStack() as stack:
+        ctx.vlm_stack = stack
+        if resumed is None:
+            local = _run_local_stages(ctx)
+            prior = 0.0
+        else:
+            local = _resume_local_stages(ctx, resumed)
+            prior = resumed.state.timings.total
+        s3_results = _run_stage3(ctx, local)
+        total = prior + time.monotonic() - t_start
+        save_checkpoint(CheckpointSaveInput(
+            path=run_in.save_state, source_path=run_in.source_path, paths=ctx.paths,
+            config=config, timings=_checkpoint_timings(ctx, total),
+            s1_out=local.s1_out, s2_out=local.s2_out, s3_results=s3_results,
+        ))
+        stages = _assemble_vlm_stages(ctx, local, s3_results)
+        state = _RunState(ctx=ctx, stages=stages, paths=ctx.paths, total_seconds=total)
+        return _finalize_run(state, run_in)
+
+
 def _load_resume_state(ctx: _StageRunCtx, run_in: _PipelineRunInput) -> CheckpointData:
     """Load and validate the checkpoint, then use its source path spelling.
 
@@ -462,18 +509,31 @@ def _load_resume_state(ctx: _StageRunCtx, run_in: _PipelineRunInput) -> Checkpoi
     source = Path(data.state.source_path)
     ctx.source_path = source
     ctx.paths = [source / photo.path for photo in data.state.photos]
+    ctx.stage3_cached = data.s3_results is not None
     return data
 
 
-def _execute_resumed(ctx: _StageRunCtx, resumed: CheckpointData) -> _RunState:
-    """Run Stage 3 onwards on checkpointed Stage 1-2 outputs."""
-    t_start = time.monotonic()
+def _resume_local_stages(ctx: _StageRunCtx, resumed: CheckpointData) -> _LocalStages:
+    """Restore the checkpointed timings on ctx and return its Stage 1-2 outputs."""
     timings = resumed.state.timings
     ctx.timings.stage1 = timings.stage1
     ctx.timings.stage2 = timings.stage2
     ctx.timings.reducer = timings.reducer
-    local = _LocalStages(s1_out=resumed.s1_out, s2_out=resumed.s2_out)
-    stages = _run_vlm_stages(ctx, local)
+    ctx.timings.stage3 = timings.stage3
+    return _LocalStages(s1_out=resumed.s1_out, s2_out=resumed.s2_out)
+
+
+def _execute_resumed(ctx: _StageRunCtx, resumed: CheckpointData) -> _RunState:
+    """Run the stages after the checkpoint on its outputs."""
+    t_start = time.monotonic()
+    timings = resumed.state.timings
+    local = _resume_local_stages(ctx, resumed)
+    if resumed.s3_results is None:
+        stages = _run_vlm_stages(ctx, local)
+    else:
+        _load_vlm_if_needed(ctx)
+        s3_results = resumed.s3_results if STAGE_VLM in ctx.config.stages else {}
+        stages = _assemble_vlm_stages(ctx, local, s3_results)
     return _RunState(
         ctx=ctx, stages=stages, paths=ctx.paths,
         total_seconds=timings.total + time.monotonic() - t_start,
@@ -521,12 +581,23 @@ def _run_local_stages(ctx: _StageRunCtx) -> _LocalStages:
 
 def _run_vlm_stages(ctx: _StageRunCtx, local: _LocalStages) -> _StagesResult:
     """Load the VLM if needed, run Stage 3, and resolve event stacks."""
-    s3_results: dict[str, Stage3Result] = {}
+    return _assemble_vlm_stages(ctx, local, _run_stage3(ctx, local))
+
+
+def _run_stage3(ctx: _StageRunCtx, local: _LocalStages) -> dict[str, Stage3Result]:
+    """Load the VLM if needed and return the Stage 3 results (empty when not configured)."""
     _load_vlm_if_needed(ctx)
-    if STAGE_IQA in ctx.config.stages:
-        s3_results = _run_s3_if_configured(
-            _S3MaybeRunInput(ctx=ctx, s2_out=local.s2_out, s1_out=local.s1_out),
-        )
+    if STAGE_IQA not in ctx.config.stages:
+        return {}
+    return _run_s3_if_configured(
+        _S3MaybeRunInput(ctx=ctx, s2_out=local.s2_out, s1_out=local.s1_out),
+    )
+
+
+def _assemble_vlm_stages(
+    ctx: _StageRunCtx, local: _LocalStages, s3_results: dict[str, Stage3Result],
+) -> _StagesResult:
+    """Combine Stage 1-3 outputs and resolve event stacks from them."""
     s2_out = local.s2_out
     search_cache = s2_out.search_cache if s2_out is not None else None
     stages = _StagesResult(

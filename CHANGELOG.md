@@ -15,6 +15,9 @@
   live display.
 - `--stop-after-stage 2 --save-state PATH` and `--resume-state PATH` split a
   run into a Stage 1-2 process and a Stage 3/4 process.
+- `--stop-after-stage 3 --save-state PATH` (optionally resuming a Stage 2
+  checkpoint) also saves the Stage 3 VLM results, so a resume runs only
+  Stage 4: curating another `--curate` count does not call Stage 3 again.
 - `PHOTO_MANAGER_CUDA_MEMORY_FRACTION` caps the process's CUDA memory.
 - `cull setup` downloads the duplicate detector's MobileNetV3 weights, so
   offline runs no longer need to fetch them.

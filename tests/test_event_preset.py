@@ -312,6 +312,13 @@ def test_event_no_vlm_curation_loads_no_vlm() -> None:
     assert _needs_vlm(CullConfig(preset="general", stages=[1, 2], curate_target=10)) is True
 
 
+def test_cached_stage3_needs_a_vlm_only_for_general_curation() -> None:
+    """Stage 3 results from a checkpoint need no VLM; the general curator's tournament still does."""
+    assert _needs_vlm(CullConfig(preset="event", curate_target=10), stage3_cached=True) is False
+    assert _needs_vlm(CullConfig(preset="general"), stage3_cached=True) is False
+    assert _needs_vlm(CullConfig(preset="general", curate_target=10), stage3_cached=True) is True
+
+
 def test_old_report_without_rating_still_loads(tmp_path: Path) -> None:
     """A report written before the rating field parses, with rating None."""
     image = tmp_path / "a.jpg"

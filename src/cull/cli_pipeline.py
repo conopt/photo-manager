@@ -18,7 +18,7 @@ from cull.cli_results import (
     _show_results,
     _write_report,
 )
-from cull.config import CullConfig, STAGE_IQA, VLM_MODELS_ROOT
+from cull.config import CullConfig, STAGE_IQA, STAGE_VLM, VLM_MODELS_ROOT
 from cull.dashboard import show_general_error, show_vlm_load_error
 from cull.pipeline import SessionResult, _PipelineRunInput, run_pipeline
 from cull.progress_jsonl import emit_progress_error
@@ -34,7 +34,7 @@ SUBCOMMAND_FLAGS: tuple[str, ...] = (
 )
 REVIEW_FLAGS: tuple[str, ...] = ("review", "review_all", "review_after")
 CURATE_REQUIRED_STAGES: tuple[int, ...] = (1, 2)
-CHECKPOINT_STOP_STAGE: int = STAGE_IQA
+CHECKPOINT_STOP_STAGES: tuple[int, ...] = (STAGE_IQA, STAGE_VLM)
 CHECKPOINT_FLAGS: tuple[str, ...] = ("stop_after_stage", "save_state", "resume_state")
 
 
@@ -49,7 +49,8 @@ class PostPipelineInput(BaseModel):
     review_after: bool = False
     json_report: Path | None = None
     progress_jsonl: bool = False
-    saved_state: Path | None = None  # Set when the run stopped after Stage 2.
+    saved_state: Path | None = None  # Set when the run stopped at a checkpoint.
+    saved_stage: int | None = None  # The stage that checkpoint stops after.
 
 
 def _require_source(kwargs: dict) -> None:
@@ -137,12 +138,12 @@ def _output_path_problem(flag: str, path: Path | None) -> str | None:
 def _checkpoint_problem(kwargs: dict) -> str | None:
     """Return why the stage-checkpoint flags are inconsistent, or None."""
     stop, save, resume = (kwargs.get(f) for f in CHECKPOINT_FLAGS)
-    if stop is not None and stop != CHECKPOINT_STOP_STAGE:
-        return f"--stop-after-stage supports only {CHECKPOINT_STOP_STAGE}"
+    if stop is not None and stop not in CHECKPOINT_STOP_STAGES:
+        return "--stop-after-stage supports only 2 or 3"
     if (stop is None) != (save is None):
-        return f"--stop-after-stage {CHECKPOINT_STOP_STAGE} and --save-state must be given together"
-    if resume is not None and stop is not None:
-        return "--resume-state cannot be combined with --stop-after-stage/--save-state"
+        return "--stop-after-stage and --save-state must be given together"
+    if resume is not None and stop == STAGE_IQA:
+        return "--resume-state cannot be combined with --stop-after-stage 2"
     others = [f for f in (*SUBCOMMAND_FLAGS, "review", "review_all", "fast") if kwargs.get(f)]
     if stop is not None and kwargs.get("review_after"):
         others.append("review_after")
@@ -151,6 +152,8 @@ def _checkpoint_problem(kwargs: dict) -> str | None:
     stages = _build_stages(kwargs["stage"], kwargs["no_vlm"])
     if any(s not in stages for s in CURATE_REQUIRED_STAGES):
         return "stage checkpoints need Stages 1 and 2; remove --stage or include 1 and 2"
+    if stop == STAGE_VLM and STAGE_VLM not in stages:
+        return "--stop-after-stage 3 needs Stage 3; remove --no-vlm or include 3 in --stage"
     return None
 
 
@@ -247,7 +250,7 @@ def _finish_stopped_run(post_in: PostPipelineInput) -> None:
     """After a run that stopped at its checkpoint: no routing, moves or session report."""
     _write_json_report(post_in)
     if not post_in.progress_jsonl:
-        click.echo(f"Stage {CHECKPOINT_STOP_STAGE} checkpoint written to {post_in.saved_state}")
+        click.echo(f"Stage {post_in.saved_stage} checkpoint written to {post_in.saved_state}")
 
 
 def _route_quietly(post_in: PostPipelineInput) -> None:

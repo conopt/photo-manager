@@ -181,11 +181,23 @@ cull --stop-after-stage 2 --save-state /tmp/shoot.npz /path/to/photos
 cull --resume-state /tmp/shoot.npz --curate 50 /path/to/photos
 ```
 
+A Stage 3 checkpoint also keeps the VLM's Stage 3 results, so curating a
+different number of photos repeats only Stage 4:
+
+```bash
+# Stage 3 on the phase 1 checkpoint, saved for any number of later curations.
+cull --resume-state /tmp/shoot.npz --stop-after-stage 3 --save-state /tmp/judged.npz /path/to/photos
+
+# Stage 4 only. With --preset event this needs no VLM at all.
+cull --resume-state /tmp/judged.npz --curate 30 /path/to/photos
+```
+
 Phase 1 records everything later stages read, then exits without routing
 files; with `--json-report` it reports the Stage 1-2 decisions. Phase 2 must
 use the same SOURCE: it refuses a checkpoint whose photos were added, removed
 or modified, or that was made with a different `--preset`, `--burst-gap` or
-`--portrait`/`--no-portrait`. Stage 3 and Stage 4 options (`--model`,
+`--portrait`/`--no-portrait`; a Stage 3 checkpoint also refuses a different
+`--model`. Stage 3 and Stage 4 options (`--model`,
 `--no-vlm`, `--curate`, `--dry-run`, ...) belong to phase 2. The checkpoint
 is an uncompressed NumPy `.npz` archive with a versioned JSON `state` member
 and the duplicate-detector and CLIP embedding arrays. Outside the `event`
