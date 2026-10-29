@@ -103,8 +103,9 @@ def _build_prompt_context(prompt_in: _PromptContextInput) -> PromptContext:
 
 
 def _rate_single_event(path: Path, loop_in: _Stage3LoopInput) -> Stage3Result:
-    """Rate one photo with the event prompt; Stage 1/2 hints are not sent."""
-    request = VlmRequest(image_path=path, context=PromptContext(), model=loop_in.model_name)
+    """Rate one photo with its preset's rating prompt; Stage 1/2 hints are not sent."""
+    context = PromptContext(preset=loop_in.config.preset)
+    request = VlmRequest(image_path=path, context=context, model=loop_in.model_name)
     return rate_photo(VlmScoreCallInput(request=request, session=loop_in.session))
 
 

@@ -1,10 +1,10 @@
-"""Event preset routing: representatives by VLM rating, or by cheap_prob rank without one."""
+"""Rated-preset routing: representatives by VLM rating, or by cheap_prob rank without one."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from cull.config import EVENT_NO_VLM_KEEPER_FRACTION, EVENT_NO_VLM_UNCERTAIN_FRACTION
+from cull.config import EVENT_NO_VLM_KEEPER_FRACTION, EVENT_NO_VLM_UNCERTAIN_FRACTION, EVENT_PRESET
 from cull.models import DecisionLabel, Stage3Result
 from cull.stage3.event_score import cheap_prob, event_score, rating_label, usable_rating
 
@@ -18,6 +18,7 @@ class EventRouteInput(BaseModel):
     s1_out: _Stage1Output
     s2_out: _Stage2Output | None = None
     s3_results: dict[str, Stage3Result] = Field(default_factory=dict)
+    preset: str = EVENT_PRESET
 
 
 def collect_event_scores(route_in: EventRouteInput) -> dict[str, float]:
@@ -25,7 +26,7 @@ def collect_event_scores(route_in: EventRouteInput) -> dict[str, float]:
     if route_in.s2_out is None:
         return {}
     return {
-        key: event_score(fusion.stage2, route_in.s3_results.get(key))
+        key: event_score(fusion.stage2, route_in.s3_results.get(key), route_in.preset)
         for key, fusion in route_in.s2_out.results.items()
         if fusion.stage2 is not None
     }
@@ -63,7 +64,7 @@ def label_by_rank(keys_best_first: list[str]) -> dict[str, DecisionLabel]:
 def _cheap_labels(route_in: EventRouteInput, reps: list[str]) -> dict[str, DecisionLabel]:
     """Rank all representatives by cheap_prob, so the cut is shoot-relative."""
     results = route_in.s2_out.results if route_in.s2_out is not None else {}
-    ranked = sorted(reps, key=lambda key: (-cheap_prob(results[key].stage2), key))
+    ranked = sorted(reps, key=lambda key: (-cheap_prob(results[key].stage2, route_in.preset), key))
     return label_by_rank(ranked)
 
 

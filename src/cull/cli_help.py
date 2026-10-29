@@ -77,6 +77,7 @@ _PRESET_INFO: list[tuple[str, str]] = [
     ("street", "Motion blur tolerance slightly higher"),
     ("holiday", "Documentary + landscape blend for holiday photos"),
     ("event", "People-first: a VLM 1-5 rating decides keep, review and curate"),
+    ("family", "Baby-first family archive, rated like event"),
 ]
 
 

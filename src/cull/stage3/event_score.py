@@ -8,7 +8,9 @@ from typing import NamedTuple
 from cull.config import (
     EVENT_CHEAP_TIEBREAK_WEIGHT,
     EVENT_KEEPER_RATING,
+    EVENT_PRESET,
     EVENT_UNCERTAIN_RATING,
+    FAMILY_PRESET,
 )
 from cull.models import DecisionLabel, Stage2Result, Stage3Result
 
@@ -36,6 +38,15 @@ CHEAP_TERMS: dict[str, _Term] = {
     "is_eyes_closed": _Term(-0.347, 0.1107, 0.3137),
 }
 CHEAP_INTERCEPT: float = -1.143
+
+# The family preset keeps only the fit's image-quality terms. Its face terms
+# describe mixer guests: a face counts against a photo, closed eyes count
+# against it, and the adult-trained valence reads a crying baby as negative.
+# Without the intercept's calibration this ranks but is no probability; it
+# only breaks rating ties and ranks photos without a rating.
+FAMILY_CHEAP_TERMS: dict[str, _Term] = {
+    name: CHEAP_TERMS[name] for name in ("topiq", "clipiqa", "laion_aesthetic")
+}
 
 
 def _or_zero(value: float | None) -> float:
@@ -70,12 +81,15 @@ def cheap_features(stage2: Stage2Result) -> dict[str, float]:
     }
 
 
-def cheap_prob(stage2: Stage2Result) -> float:
-    """Return the cheap-model keeper probability in (0, 1)."""
+def cheap_prob(stage2: Stage2Result, preset: str = EVENT_PRESET) -> float:
+    """Return the preset's cheap keeper score in (0, 1)."""
     features = cheap_features(stage2)
-    logit = CHEAP_INTERCEPT + sum(
+    terms, intercept = (
+        (FAMILY_CHEAP_TERMS, 0.0) if preset == FAMILY_PRESET else (CHEAP_TERMS, CHEAP_INTERCEPT)
+    )
+    logit = intercept + sum(
         term.coef * (features[name] - term.mean) / term.std
-        for name, term in CHEAP_TERMS.items()
+        for name, term in terms.items()
     )
     return 1.0 / (1.0 + math.exp(-logit))
 
@@ -87,9 +101,11 @@ def usable_rating(stage3: Stage3Result | None) -> int | None:
     return stage3.rating
 
 
-def event_score(stage2: Stage2Result, stage3: Stage3Result | None) -> float:
+def event_score(
+    stage2: Stage2Result, stage3: Stage3Result | None, preset: str = EVENT_PRESET,
+) -> float:
     """Return rating + 0.01 * cheap_prob, or cheap_prob alone without a rating."""
-    prob = cheap_prob(stage2)
+    prob = cheap_prob(stage2, preset)
     rating = usable_rating(stage3)
     if rating is None:
         return prob

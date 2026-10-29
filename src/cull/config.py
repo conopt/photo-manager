@@ -191,6 +191,19 @@ GENRE_WEIGHTS: dict[str, dict[str, float]] = {
         "exposure_drift": EXPOSURE_DRIFT_WEIGHT_DEFAULT,
         "exif_anomaly": EXIF_ANOMALY_WEIGHT_DEFAULT,
         "scene_start_bonus": SCENE_START_BONUS_WEIGHT_DEFAULT,
+    },    # Same display-only role as for event.
+    "family": {
+        "topiq": 0.25,
+        "laion_aesthetic": 0.40,
+        "clipiqa": 0.25,
+        "exposure": 0.10,
+        "composition": COMPOSITION_WEIGHT_DEFAULT,
+        "taste": TASTE_WEIGHT_DEFAULT,
+        "tilt_penalty": TILT_PENALTY_WEIGHT_PEOPLE,
+        "palette_outlier": PALETTE_OUTLIER_WEIGHT_DEFAULT,
+        "exposure_drift": EXPOSURE_DRIFT_WEIGHT_DEFAULT,
+        "exif_anomaly": EXIF_ANOMALY_WEIGHT_DEFAULT,
+        "scene_start_bonus": SCENE_START_BONUS_WEIGHT_DEFAULT,
     },
 }
 
@@ -257,6 +270,14 @@ PRESET_QUALITY_POLICY: dict[str, dict[str, float]] = {
         "portrait_sharpness_bonus": 0.08,
         "eyes_closed_penalty": 0.18,
         "face_occlusion_penalty": 0.12,
+    },    # A sleeping or nursing baby is a keeper: closed eyes and a partly
+    # covered face are not faults.
+    "family": {
+        "subject_blur_blend": 0.30,
+        "bokeh_bonus": 0.05,
+        "portrait_sharpness_bonus": 0.08,
+        "eyes_closed_penalty": 0.00,
+        "face_occlusion_penalty": 0.00,
     },
 }
 
@@ -340,6 +361,7 @@ CLUSTER_THRESHOLD: dict[str, float] = {
     "street": 0.20,        # loose   — decisive moments differ visually
     "holiday": 0.18,       # mid     — blend of documentary and landscape
     "event": 0.10,         # unused  — the event curator runs MMR, no clusters
+    "family": 0.10,        # unused  — curated like event
 }
 
 CURATE_DEFAULT_TARGET: int = 30
@@ -629,14 +651,18 @@ CULL_DEFAULT_THRESHOLD: float = 0.65
 
 PresetName = Literal[
     "general", "wedding", "documentary", "wildlife", "landscape", "street", "holiday",
-    "event",
+    "event", "family",
 ]
 EVENT_PRESET: str = "event"
+FAMILY_PRESET: str = "family"
+# Presets whose VLM 1-5 rating drives keep/reject/curate; they differ only in
+# the rating prompt and the cheap tiebreak.
+RATED_PRESETS: frozenset[str] = frozenset({EVENT_PRESET, FAMILY_PRESET})
 
 
 def default_model_alias(preset: str | None) -> str:
     """Return the VLM alias used when --model is not given."""
-    return EVENT_VLM_ALIAS if preset == EVENT_PRESET else VLM_DEFAULT_ALIAS
+    return EVENT_VLM_ALIAS if preset in RATED_PRESETS else VLM_DEFAULT_ALIAS
 
 # ---------------------------------------------------------------------------
 # Model cache config
@@ -798,4 +824,4 @@ class CullConfig(BaseModel):
     @property
     def is_event(self) -> bool:
         """Return True when the VLM rating drives keep/reject/curate."""
-        return self.preset == EVENT_PRESET
+        return self.preset in RATED_PRESETS

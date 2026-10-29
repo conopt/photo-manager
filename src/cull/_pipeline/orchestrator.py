@@ -318,10 +318,11 @@ def _execute_run(ctx: _StageRunCtx) -> _RunState:
     )
 
 
-def _event_route_input(stages: _StagesResult) -> EventRouteInput:
+def _event_route_input(stages: _StagesResult, config: CullConfig) -> EventRouteInput:
     """Bundle the stage outputs the event router and scorer read."""
     return EventRouteInput(
         s1_out=stages.s1_out, s2_out=stages.s2_out, s3_results=stages.s3_results,
+        preset=config.preset,
     )
 
 
@@ -329,7 +330,7 @@ def _event_labels(state: _RunState) -> dict[str, DecisionLabel] | None:
     """Return event-preset labels for representatives, or None for other presets."""
     if not state.ctx.config.is_event:
         return None
-    return route_event(_event_route_input(state.stages))
+    return route_event(_event_route_input(state.stages, state.ctx.config))
 
 
 def _finalize_run(state: _RunState, run_in: _PipelineRunInput) -> SessionResult:
@@ -605,7 +606,7 @@ def _assemble_vlm_stages(
         s3_results=s3_results, search_cache=search_cache,
     )
     if ctx.config.is_event:
-        resolve_event_stacks(local.s1_out, collect_event_scores(_event_route_input(stages)))
+        resolve_event_stacks(local.s1_out, collect_event_scores(_event_route_input(stages, ctx.config)))
     return stages
 
 

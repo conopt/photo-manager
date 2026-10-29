@@ -89,6 +89,7 @@ def _collect_event_scores(s4_in: _S4RunInput) -> dict[str, float]:
     stages = s4_in.stages
     return collect_event_scores(EventRouteInput(
         s1_out=stages.s1_out, s2_out=stages.s2_out, s3_results=stages.s3_results,
+        preset=s4_in.ctx.config.preset,
     ))
 
 

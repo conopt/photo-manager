@@ -21,6 +21,10 @@
 - `PHOTO_MANAGER_CUDA_MEMORY_FRACTION` caps the process's CUDA memory.
 - `cull setup` downloads the duplicate detector's MobileNetV3 weights, so
   offline runs no longer need to fetch them.
+- `--preset family` rates every photo like `event`, with a prompt for a
+  family's own photos of their baby or young child: sleeping, crying and
+  feeding frames are keepers, only frames with the child rate 5, and the
+  rating tiebreak uses image quality without the event fit's face terms.
 
 ### Fixed
 
